@@ -1,0 +1,23 @@
+[
+  {
+    "name": "substack.sid",
+    "value": "YOUR_SESSION_ID_HERE",
+    "domain": ".substack.com",
+    "path": "/",
+    "secure": true
+  },
+  {
+    "name": "substack.lli",
+    "value": "YOUR_LLI_VALUE_HERE",
+    "domain": ".substack.com",
+    "path": "/",
+    "secure": true
+  },
+  {
+    "name": "connect.sid",
+    "value": "YOUR_CONNECT_SID_HERE",
+    "domain": ".substack.com",
+    "path": "/",
+    "secure": true
+  }
+]
