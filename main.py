@@ -44,8 +44,13 @@ def fetch_newsletter(
     limit: int | None,
     include_comments: bool,
     delay: float = 2.0,
+    verbose: bool = False,
 ) -> None:
     """Fetch multiple posts from a newsletter."""
+    def log(msg: str) -> None:
+        if verbose:
+            print(f"[DEBUG] {msg}", file=sys.stderr)
+
     if output_dir:
         if limit:
             print(f"Fetching up to {limit} posts from: {url}", file=sys.stderr)
@@ -58,32 +63,43 @@ def fetch_newsletter(
             limit=limit,
             include_comments=include_comments,
             delay=delay,
+            verbose=verbose,
         )
         print(f"Fetched {len(saved_files)} posts to {output_dir}", file=sys.stderr)
     else:
         # No output dir - fetch posts and print as JSON array to stdout
-        posts = fetcher.get_posts(url, limit=limit)
+        log(f"Fetching post list from: {url}")
+        posts = fetcher.get_posts(url, limit=limit, verbose=verbose)
+        log(f"Found {len(posts)} posts")
+
         all_posts_data = []
         for i, post in enumerate(posts):
             slug = post.get("slug")
             if slug:
                 post_url = f"{url.rstrip('/')}/p/{slug}"
+                log(f"[{i+1}/{len(posts)}] Fetching: {slug}")
                 if include_comments:
                     post_data = fetcher.get_post_with_comments(post_url)
                 else:
                     post_data = fetcher.get_post_content(post_url)
                 all_posts_data.append(post_data)
+                log(f"[{i+1}/{len(posts)}] Done: {slug}")
 
                 # Delay between requests (skip after last post)
                 if delay > 0 and i < len(posts) - 1:
+                    log(f"Waiting {delay}s...")
                     time.sleep(delay)
 
         print(json.dumps(all_posts_data, indent=2, ensure_ascii=False))
 
 
-def list_posts(fetcher: SubstackFetcher, url: str, limit: int | None, output_dir: str | None) -> None:
+def list_posts(fetcher: SubstackFetcher, url: str, limit: int | None, output_dir: str | None, verbose: bool = False) -> None:
     """List posts from a newsletter as JSON."""
-    posts = fetcher.get_posts(url, limit=limit)
+    if verbose:
+        print(f"[DEBUG] Fetching post list from: {url}", file=sys.stderr)
+    posts = fetcher.get_posts(url, limit=limit, verbose=verbose)
+    if verbose:
+        print(f"[DEBUG] Found {len(posts)} posts", file=sys.stderr)
 
     # Build clean list of post metadata
     posts_data = []
@@ -193,6 +209,11 @@ Examples:
         default=2.0,
         help="Delay in seconds between requests to avoid rate limiting (default: 2.0)",
     )
+    parser.add_argument(
+        "--verbose", "-v",
+        action="store_true",
+        help="Enable verbose output for debugging",
+    )
 
     args = parser.parse_args()
 
@@ -214,7 +235,7 @@ Examples:
         if args.url:
             fetch_single_post(fetcher, args.url, args.output, include_comments)
         elif args.list:
-            list_posts(fetcher, args.newsletter, limit, args.output_dir)
+            list_posts(fetcher, args.newsletter, limit, args.output_dir, verbose=args.verbose)
         else:
             fetch_newsletter(
                 fetcher,
@@ -223,6 +244,7 @@ Examples:
                 limit,
                 include_comments,
                 delay=args.delay,
+                verbose=args.verbose,
             )
         return 0
 

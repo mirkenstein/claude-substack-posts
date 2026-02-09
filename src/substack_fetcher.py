@@ -6,6 +6,7 @@ Supports authenticated access for paid subscriber content.
 
 import json
 import re
+import sys
 import time
 from pathlib import Path
 from typing import Optional
@@ -13,6 +14,12 @@ from urllib.parse import urlparse
 
 import requests
 from substack_api import Newsletter, Post, SubstackAuth
+
+
+def _log(msg: str, verbose: bool = False) -> None:
+    """Print debug message if verbose mode is enabled."""
+    if verbose:
+        print(f"[DEBUG] {msg}", file=sys.stderr)
 
 
 class SubstackFetcher:
@@ -80,6 +87,7 @@ class SubstackFetcher:
         publication_url: str,
         limit: int | None = 10,
         sorting: str = "new",
+        verbose: bool = False,
     ) -> list[dict]:
         """
         Get posts from a newsletter.
@@ -88,20 +96,26 @@ class SubstackFetcher:
             publication_url: The Substack publication URL.
             limit: Maximum number of posts to fetch. None for all posts.
             sorting: Sort order - "new" or "top".
+            verbose: Enable debug logging.
 
         Returns:
             List of post dictionaries (metadata).
         """
+        _log(f"Creating Newsletter object for: {publication_url}", verbose)
         newsletter = self.get_newsletter(publication_url)
+        _log(f"Newsletter object created", verbose)
 
         # Fetch posts - use a large number if limit is None (fetch all)
         fetch_limit = limit if limit is not None else 10000
+        _log(f"Fetching posts with limit={fetch_limit}, sorting={sorting}", verbose)
         posts = newsletter.get_posts(limit=fetch_limit, sorting=sorting)
+        _log(f"Received {len(posts) if posts else 0} posts from API", verbose)
 
         # Convert Post objects to dictionaries using their metadata
         result = []
-        for post in posts:
+        for i, post in enumerate(posts):
             if hasattr(post, 'get_metadata'):
+                _log(f"Converting post {i+1}/{len(posts)} to metadata", verbose)
                 result.append(post.get_metadata())
             elif isinstance(post, dict):
                 result.append(post)
@@ -112,6 +126,7 @@ class SubstackFetcher:
                     'title': getattr(post, 'title', None),
                     'id': getattr(post, 'id', None),
                 })
+        _log(f"Converted {len(result)} posts to dictionaries", verbose)
         return result
 
     def get_post(self, post_url: str) -> Post:
@@ -241,6 +256,7 @@ class SubstackFetcher:
         limit: int | None = 10,
         include_comments: bool = True,
         delay: float = 2.0,
+        verbose: bool = False,
     ) -> list[str]:
         """
         Fetch multiple posts from a newsletter and save them.
@@ -251,11 +267,14 @@ class SubstackFetcher:
             limit: Maximum number of posts to fetch. None for all posts.
             include_comments: Whether to include comments.
             delay: Delay in seconds between requests to avoid rate limiting.
+            verbose: Enable debug logging.
 
         Returns:
             List of saved file paths.
         """
-        posts = self.get_posts(publication_url, limit=limit)
+        _log(f"Fetching post list from: {publication_url}", verbose)
+        posts = self.get_posts(publication_url, limit=limit, verbose=verbose)
+        _log(f"Found {len(posts)} posts to fetch", verbose)
         saved_files = []
 
         output_path = Path(output_dir)
@@ -267,19 +286,21 @@ class SubstackFetcher:
             file_path = output_path / f"{slug}.json"
 
             try:
+                _log(f"[{i+1}/{len(posts)}] Fetching: {slug}", verbose)
                 self.save_post(
                     post_url,
                     str(file_path),
                     include_comments=include_comments,
                 )
                 saved_files.append(str(file_path))
-                print(f"Saved: {file_path}")
+                print(f"Saved: {file_path}", file=sys.stderr)
 
                 # Delay between requests (skip after last post)
                 if delay > 0 and i < len(posts) - 1:
+                    _log(f"Waiting {delay}s before next request...", verbose)
                     time.sleep(delay)
 
             except Exception as e:
-                print(f"Error saving {post_url}: {e}")
+                print(f"Error saving {post_url}: {e}", file=sys.stderr)
 
         return saved_files
