@@ -9,6 +9,7 @@ Usage:
 
 import argparse
 import json
+import random
 import sys
 import time
 from pathlib import Path
@@ -44,12 +45,17 @@ def fetch_newsletter(
     limit: int | None,
     include_comments: bool,
     delay: float = 2.0,
+    jitter: float = 1.0,
     verbose: bool = False,
 ) -> None:
     """Fetch multiple posts from a newsletter."""
     def log(msg: str) -> None:
         if verbose:
             print(f"[DEBUG] {msg}", file=sys.stderr)
+
+    def get_wait_time() -> float:
+        """Calculate wait time with jitter."""
+        return delay + random.uniform(0, jitter)
 
     if output_dir:
         if limit:
@@ -63,6 +69,7 @@ def fetch_newsletter(
             limit=limit,
             include_comments=include_comments,
             delay=delay,
+            jitter=jitter,
             verbose=verbose,
         )
         print(f"Fetched {len(saved_files)} posts to {output_dir}", file=sys.stderr)
@@ -86,9 +93,10 @@ def fetch_newsletter(
                 log(f"[{i+1}/{len(posts)}] Done: {slug}")
 
                 # Delay between requests (skip after last post)
-                if delay > 0 and i < len(posts) - 1:
-                    log(f"Waiting {delay}s...")
-                    time.sleep(delay)
+                if (delay > 0 or jitter > 0) and i < len(posts) - 1:
+                    wait = get_wait_time()
+                    log(f"Waiting {wait:.1f}s...")
+                    time.sleep(wait)
 
         print(json.dumps(all_posts_data, indent=2, ensure_ascii=False))
 
@@ -138,6 +146,7 @@ def fetch_from_list(
     output_dir: str,
     include_comments: bool,
     delay: float,
+    jitter: float,
     resume: bool,
     verbose: bool = False,
 ) -> None:
@@ -145,6 +154,10 @@ def fetch_from_list(
     def log(msg: str) -> None:
         if verbose:
             print(f"[DEBUG] {msg}", file=sys.stderr)
+
+    def get_wait_time() -> float:
+        """Calculate wait time with jitter."""
+        return delay + random.uniform(0, jitter)
 
     # Load the posts list
     log(f"Loading posts list from: {list_file}")
@@ -196,9 +209,10 @@ def fetch_from_list(
             fetched += 1
 
             # Delay between requests (skip after last post)
-            if delay > 0 and i < len(posts) - 1:
-                log(f"Waiting {delay}s...")
-                time.sleep(delay)
+            if (delay > 0 or jitter > 0) and i < len(posts) - 1:
+                wait = get_wait_time()
+                log(f"Waiting {wait:.1f}s...")
+                time.sleep(wait)
 
         except Exception as e:
             print(f"[{i+1}/{len(posts)}] Error fetching {slug}: {e}", file=sys.stderr)
@@ -293,6 +307,12 @@ Examples:
         help="Delay in seconds between requests to avoid rate limiting (default: 2.0)",
     )
     parser.add_argument(
+        "--jitter",
+        type=float,
+        default=1.0,
+        help="Random jitter added to delay (0 to jitter seconds, default: 1.0)",
+    )
+    parser.add_argument(
         "--verbose", "-v",
         action="store_true",
         help="Enable verbose output for debugging",
@@ -332,6 +352,7 @@ Examples:
                 args.output_dir,
                 include_comments,
                 delay=args.delay,
+                jitter=args.jitter,
                 resume=args.resume,
                 verbose=args.verbose,
             )
@@ -345,6 +366,7 @@ Examples:
                 limit,
                 include_comments,
                 delay=args.delay,
+                jitter=args.jitter,
                 verbose=args.verbose,
             )
         return 0

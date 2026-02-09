@@ -5,6 +5,7 @@ Supports authenticated access for paid subscriber content.
 """
 
 import json
+import random
 import re
 import sys
 import time
@@ -256,6 +257,7 @@ class SubstackFetcher:
         limit: int | None = 10,
         include_comments: bool = True,
         delay: float = 2.0,
+        jitter: float = 1.0,
         verbose: bool = False,
     ) -> list[str]:
         """
@@ -267,6 +269,7 @@ class SubstackFetcher:
             limit: Maximum number of posts to fetch. None for all posts.
             include_comments: Whether to include comments.
             delay: Delay in seconds between requests to avoid rate limiting.
+            jitter: Random jitter (0 to jitter) added to delay.
             verbose: Enable debug logging.
 
         Returns:
@@ -296,9 +299,10 @@ class SubstackFetcher:
                 print(f"Saved: {file_path}", file=sys.stderr)
 
                 # Delay between requests (skip after last post)
-                if delay > 0 and i < len(posts) - 1:
-                    _log(f"Waiting {delay}s before next request...", verbose)
-                    time.sleep(delay)
+                if (delay > 0 or jitter > 0) and i < len(posts) - 1:
+                    wait = delay + random.uniform(0, jitter)
+                    _log(f"Waiting {wait:.1f}s before next request...", verbose)
+                    time.sleep(wait)
 
             except Exception as e:
                 print(f"Error saving {post_url}: {e}", file=sys.stderr)
