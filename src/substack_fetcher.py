@@ -89,10 +89,26 @@ class SubstackFetcher:
             sorting: Sort order - "new" or "top".
 
         Returns:
-            List of post dictionaries.
+            List of post dictionaries (metadata).
         """
         newsletter = self.get_newsletter(publication_url)
-        return newsletter.get_posts(limit=limit, sorting=sorting)
+        posts = newsletter.get_posts(limit=limit, sorting=sorting)
+
+        # Convert Post objects to dictionaries using their metadata
+        result = []
+        for post in posts:
+            if hasattr(post, 'get_metadata'):
+                result.append(post.get_metadata())
+            elif isinstance(post, dict):
+                result.append(post)
+            else:
+                # Fallback: try to access common attributes
+                result.append({
+                    'slug': getattr(post, 'slug', None),
+                    'title': getattr(post, 'title', None),
+                    'id': getattr(post, 'id', None),
+                })
+        return result
 
     def get_post(self, post_url: str) -> Post:
         """
