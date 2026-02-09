@@ -39,43 +39,73 @@ def fetch_single_post(
 def fetch_newsletter(
     fetcher: SubstackFetcher,
     url: str,
-    output_dir: str,
+    output_dir: str | None,
     limit: int | None,
     include_comments: bool,
 ) -> None:
     """Fetch multiple posts from a newsletter."""
-    if limit:
-        print(f"Fetching up to {limit} posts from: {url}")
+    if output_dir:
+        if limit:
+            print(f"Fetching up to {limit} posts from: {url}", file=sys.stderr)
+        else:
+            print(f"Fetching all posts from: {url}", file=sys.stderr)
+
+        saved_files = fetcher.fetch_all_posts(
+            url,
+            output_dir,
+            limit=limit,
+            include_comments=include_comments,
+        )
+        print(f"Fetched {len(saved_files)} posts to {output_dir}", file=sys.stderr)
     else:
-        print(f"Fetching all posts from: {url}")
+        # No output dir - fetch posts and print as JSON array to stdout
+        posts = fetcher.get_posts(url, limit=limit)
+        all_posts_data = []
+        for post in posts:
+            slug = post.get("slug")
+            if slug:
+                post_url = f"{url.rstrip('/')}/p/{slug}"
+                if include_comments:
+                    post_data = fetcher.get_post_with_comments(post_url)
+                else:
+                    post_data = fetcher.get_post_content(post_url)
+                all_posts_data.append(post_data)
+        print(json.dumps(all_posts_data, indent=2, ensure_ascii=False))
 
-    saved_files = fetcher.fetch_all_posts(
-        url,
-        output_dir,
-        limit=limit,
-        include_comments=include_comments,
-    )
 
-    print(f"\nFetched {len(saved_files)} posts to {output_dir}")
-
-
-def list_posts(fetcher: SubstackFetcher, url: str, limit: int | None) -> None:
-    """List posts from a newsletter without fetching content."""
-    print(f"Listing posts from: {url}\n")
-
+def list_posts(fetcher: SubstackFetcher, url: str, limit: int | None, output_dir: str | None) -> None:
+    """List posts from a newsletter as JSON."""
     posts = fetcher.get_posts(url, limit=limit)
 
-    for i, post in enumerate(posts, 1):
-        title = post.get("title", "Untitled")
-        slug = post.get("slug", "")
-        date = post.get("post_date", "")[:10] if post.get("post_date") else ""
-        paywalled = " [PAID]" if post.get("audience") == "only_paid" else ""
+    # Build clean list of post metadata
+    posts_data = []
+    for post in posts:
+        posts_data.append({
+            "title": post.get("title", "Untitled"),
+            "slug": post.get("slug", ""),
+            "url": f"{url}/p/{post.get('slug', '')}",
+            "date": post.get("post_date", "")[:10] if post.get("post_date") else None,
+            "audience": post.get("audience"),
+            "subtitle": post.get("subtitle"),
+        })
 
-        print(f"{i:3}. {title}{paywalled}")
-        print(f"     {url}/p/{slug}")
-        if date:
-            print(f"     Date: {date}")
-        print()
+    output = {
+        "newsletter": url,
+        "count": len(posts_data),
+        "posts": posts_data,
+    }
+
+    json_str = json.dumps(output, indent=2, ensure_ascii=False)
+
+    if output_dir:
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
+        # Extract newsletter name from URL
+        newsletter_name = url.rstrip("/").split("/")[-1].replace(".substack.com", "")
+        output_file = Path(output_dir) / f"{newsletter_name}_posts.json"
+        output_file.write_text(json_str, encoding="utf-8")
+        print(f"Saved {len(posts_data)} posts to: {output_file}")
+    else:
+        print(json_str)
 
 
 def main() -> int:
@@ -124,8 +154,7 @@ Examples:
     )
     parser.add_argument(
         "--output-dir",
-        default="./output",
-        help="Output directory for multiple posts (default: ./output)",
+        help="Output directory for saving JSON files (prints to stdout if not specified)",
     )
 
     # Fetch options
@@ -171,7 +200,7 @@ Examples:
         if args.url:
             fetch_single_post(fetcher, args.url, args.output, include_comments)
         elif args.list:
-            list_posts(fetcher, args.newsletter, limit)
+            list_posts(fetcher, args.newsletter, limit, args.output_dir)
         else:
             fetch_newsletter(
                 fetcher,
