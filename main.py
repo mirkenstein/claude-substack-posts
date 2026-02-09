@@ -132,6 +132,82 @@ def list_posts(fetcher: SubstackFetcher, url: str, limit: int | None, output_dir
         print(json_str)
 
 
+def fetch_from_list(
+    fetcher: SubstackFetcher,
+    list_file: str,
+    output_dir: str,
+    include_comments: bool,
+    delay: float,
+    resume: bool,
+    verbose: bool = False,
+) -> None:
+    """Fetch posts from a saved list JSON file."""
+    def log(msg: str) -> None:
+        if verbose:
+            print(f"[DEBUG] {msg}", file=sys.stderr)
+
+    # Load the posts list
+    log(f"Loading posts list from: {list_file}")
+    with open(list_file, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    posts = data.get("posts", [])
+    newsletter_url = data.get("newsletter", "").rstrip("/")
+
+    if not posts:
+        print("No posts found in list file", file=sys.stderr)
+        return
+
+    print(f"Loaded {len(posts)} posts from list", file=sys.stderr)
+
+    # Create output directory
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    # Track progress
+    fetched = 0
+    skipped = 0
+    errors = 0
+
+    for i, post in enumerate(posts):
+        slug = post.get("slug", "")
+        if not slug:
+            log(f"[{i+1}/{len(posts)}] Skipping post with no slug")
+            continue
+
+        file_path = output_path / f"{slug}.json"
+
+        # Resume: skip if file already exists
+        if resume and file_path.exists():
+            log(f"[{i+1}/{len(posts)}] Skipping (exists): {slug}")
+            skipped += 1
+            continue
+
+        post_url = post.get("url") or f"{newsletter_url}/p/{slug}"
+
+        try:
+            log(f"[{i+1}/{len(posts)}] Fetching: {slug}")
+            fetcher.save_post(
+                post_url,
+                str(file_path),
+                include_comments=include_comments,
+            )
+            print(f"[{i+1}/{len(posts)}] Saved: {file_path}", file=sys.stderr)
+            fetched += 1
+
+            # Delay between requests (skip after last post)
+            if delay > 0 and i < len(posts) - 1:
+                log(f"Waiting {delay}s...")
+                time.sleep(delay)
+
+        except Exception as e:
+            print(f"[{i+1}/{len(posts)}] Error fetching {slug}: {e}", file=sys.stderr)
+            errors += 1
+
+    # Summary
+    print(f"\nDone: {fetched} fetched, {skipped} skipped, {errors} errors", file=sys.stderr)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Fetch Substack articles and comments",
@@ -147,8 +223,11 @@ Examples:
   # Fetch multiple posts from a newsletter
   python main.py --newsletter https://newsletter.substack.com --limit 20 --output-dir ./posts
 
-  # List posts without fetching
-  python main.py --newsletter https://newsletter.substack.com --list --limit 50
+  # List all posts to a JSON file (without fetching content)
+  python main.py --newsletter https://newsletter.substack.com --list --all --output-dir ./posts
+
+  # Fetch posts from a saved list with resume support
+  python main.py --from-list ./posts/newsletter_posts.json --output-dir ./posts --resume
 
   # Fetch without comments
   python main.py --url https://newsletter.substack.com/p/post-slug --no-comments
@@ -163,6 +242,10 @@ Examples:
     parser.add_argument(
         "--newsletter",
         help="URL of a Substack newsletter to fetch multiple posts",
+    )
+    parser.add_argument(
+        "--from-list",
+        help="Path to a posts list JSON file (from --list --output-dir)",
     )
 
     # Authentication
@@ -214,15 +297,23 @@ Examples:
         action="store_true",
         help="Enable verbose output for debugging",
     )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Skip posts that already exist in output directory",
+    )
 
     args = parser.parse_args()
 
     # Validate arguments
-    if not args.url and not args.newsletter:
-        parser.error("Either --url or --newsletter is required")
+    if not args.url and not args.newsletter and not args.from_list:
+        parser.error("Either --url, --newsletter, or --from-list is required")
 
-    if args.url and args.newsletter:
-        parser.error("Cannot use both --url and --newsletter")
+    if sum(bool(x) for x in [args.url, args.newsletter, args.from_list]) > 1:
+        parser.error("Cannot use --url, --newsletter, and --from-list together")
+
+    if args.from_list and not args.output_dir:
+        parser.error("--from-list requires --output-dir")
 
     # Initialize fetcher
     fetcher = SubstackFetcher(cookies_path=args.cookies)
@@ -234,6 +325,16 @@ Examples:
     try:
         if args.url:
             fetch_single_post(fetcher, args.url, args.output, include_comments)
+        elif args.from_list:
+            fetch_from_list(
+                fetcher,
+                args.from_list,
+                args.output_dir,
+                include_comments,
+                delay=args.delay,
+                resume=args.resume,
+                verbose=args.verbose,
+            )
         elif args.list:
             list_posts(fetcher, args.newsletter, limit, args.output_dir, verbose=args.verbose)
         else:
