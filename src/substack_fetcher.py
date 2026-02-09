@@ -6,6 +6,7 @@ Supports authenticated access for paid subscriber content.
 
 import json
 import re
+import time
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
@@ -239,6 +240,7 @@ class SubstackFetcher:
         output_dir: str,
         limit: int | None = 10,
         include_comments: bool = True,
+        delay: float = 2.0,
     ) -> list[str]:
         """
         Fetch multiple posts from a newsletter and save them.
@@ -248,6 +250,7 @@ class SubstackFetcher:
             output_dir: Directory to save posts.
             limit: Maximum number of posts to fetch. None for all posts.
             include_comments: Whether to include comments.
+            delay: Delay in seconds between requests to avoid rate limiting.
 
         Returns:
             List of saved file paths.
@@ -258,7 +261,7 @@ class SubstackFetcher:
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
 
-        for post in posts:
+        for i, post in enumerate(posts):
             slug = post.get("slug", post.get("id", "unknown"))
             post_url = f"{publication_url}/p/{slug}"
             file_path = output_path / f"{slug}.json"
@@ -271,6 +274,11 @@ class SubstackFetcher:
                 )
                 saved_files.append(str(file_path))
                 print(f"Saved: {file_path}")
+
+                # Delay between requests (skip after last post)
+                if delay > 0 and i < len(posts) - 1:
+                    time.sleep(delay)
+
             except Exception as e:
                 print(f"Error saving {post_url}: {e}")
 

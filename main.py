@@ -10,6 +10,7 @@ Usage:
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 
 from src.substack_fetcher import SubstackFetcher
@@ -42,6 +43,7 @@ def fetch_newsletter(
     output_dir: str | None,
     limit: int | None,
     include_comments: bool,
+    delay: float = 2.0,
 ) -> None:
     """Fetch multiple posts from a newsletter."""
     if output_dir:
@@ -55,13 +57,14 @@ def fetch_newsletter(
             output_dir,
             limit=limit,
             include_comments=include_comments,
+            delay=delay,
         )
         print(f"Fetched {len(saved_files)} posts to {output_dir}", file=sys.stderr)
     else:
         # No output dir - fetch posts and print as JSON array to stdout
         posts = fetcher.get_posts(url, limit=limit)
         all_posts_data = []
-        for post in posts:
+        for i, post in enumerate(posts):
             slug = post.get("slug")
             if slug:
                 post_url = f"{url.rstrip('/')}/p/{slug}"
@@ -70,6 +73,11 @@ def fetch_newsletter(
                 else:
                     post_data = fetcher.get_post_content(post_url)
                 all_posts_data.append(post_data)
+
+                # Delay between requests (skip after last post)
+                if delay > 0 and i < len(posts) - 1:
+                    time.sleep(delay)
+
         print(json.dumps(all_posts_data, indent=2, ensure_ascii=False))
 
 
@@ -179,6 +187,12 @@ Examples:
         action="store_true",
         help="List posts without fetching content",
     )
+    parser.add_argument(
+        "--delay",
+        type=float,
+        default=2.0,
+        help="Delay in seconds between requests to avoid rate limiting (default: 2.0)",
+    )
 
     args = parser.parse_args()
 
@@ -208,6 +222,7 @@ Examples:
                 args.output_dir,
                 limit,
                 include_comments,
+                delay=args.delay,
             )
         return 0
 
