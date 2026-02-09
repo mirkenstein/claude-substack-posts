@@ -40,11 +40,14 @@ def fetch_newsletter(
     fetcher: SubstackFetcher,
     url: str,
     output_dir: str,
-    limit: int,
+    limit: int | None,
     include_comments: bool,
 ) -> None:
     """Fetch multiple posts from a newsletter."""
-    print(f"Fetching up to {limit} posts from: {url}")
+    if limit:
+        print(f"Fetching up to {limit} posts from: {url}")
+    else:
+        print(f"Fetching all posts from: {url}")
 
     saved_files = fetcher.fetch_all_posts(
         url,
@@ -56,7 +59,7 @@ def fetch_newsletter(
     print(f"\nFetched {len(saved_files)} posts to {output_dir}")
 
 
-def list_posts(fetcher: SubstackFetcher, url: str, limit: int) -> None:
+def list_posts(fetcher: SubstackFetcher, url: str, limit: int | None) -> None:
     """List posts from a newsletter without fetching content."""
     print(f"Listing posts from: {url}\n")
 
@@ -133,6 +136,11 @@ Examples:
         help="Maximum number of posts to fetch (default: 10)",
     )
     parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Fetch all posts (overrides --limit)",
+    )
+    parser.add_argument(
         "--no-comments",
         action="store_true",
         help="Don't fetch comments",
@@ -156,17 +164,20 @@ Examples:
     fetcher = SubstackFetcher(cookies_path=args.cookies)
     include_comments = not args.no_comments
 
+    # Use None for limit if --all is specified
+    limit = None if args.all else args.limit
+
     try:
         if args.url:
             fetch_single_post(fetcher, args.url, args.output, include_comments)
         elif args.list:
-            list_posts(fetcher, args.newsletter, args.limit)
+            list_posts(fetcher, args.newsletter, limit)
         else:
             fetch_newsletter(
                 fetcher,
                 args.newsletter,
                 args.output_dir,
-                args.limit,
+                limit,
                 include_comments,
             )
         return 0

@@ -77,7 +77,7 @@ class SubstackFetcher:
     def get_posts(
         self,
         publication_url: str,
-        limit: int = 10,
+        limit: int | None = 10,
         sorting: str = "new",
     ) -> list[dict]:
         """
@@ -85,14 +85,17 @@ class SubstackFetcher:
 
         Args:
             publication_url: The Substack publication URL.
-            limit: Maximum number of posts to fetch.
+            limit: Maximum number of posts to fetch. None for all posts.
             sorting: Sort order - "new" or "top".
 
         Returns:
             List of post dictionaries (metadata).
         """
         newsletter = self.get_newsletter(publication_url)
-        posts = newsletter.get_posts(limit=limit, sorting=sorting)
+
+        # Fetch posts - use a large number if limit is None (fetch all)
+        fetch_limit = limit if limit is not None else 10000
+        posts = newsletter.get_posts(limit=fetch_limit, sorting=sorting)
 
         # Convert Post objects to dictionaries using their metadata
         result = []
@@ -234,7 +237,7 @@ class SubstackFetcher:
         self,
         publication_url: str,
         output_dir: str,
-        limit: int = 10,
+        limit: int | None = 10,
         include_comments: bool = True,
     ) -> list[str]:
         """
@@ -243,7 +246,7 @@ class SubstackFetcher:
         Args:
             publication_url: The Substack publication URL.
             output_dir: Directory to save posts.
-            limit: Maximum number of posts to fetch.
+            limit: Maximum number of posts to fetch. None for all posts.
             include_comments: Whether to include comments.
 
         Returns:
