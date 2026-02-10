@@ -12,9 +12,49 @@ import json
 import random
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 from src.substack_fetcher import SubstackFetcher
+
+
+def parse_date(date_str: str) -> datetime:
+    """Parse date string in YYYY-MM-DD format."""
+    return datetime.strptime(date_str, "%Y-%m-%d")
+
+
+def filter_posts_by_date(
+    posts: list[dict],
+    since: str | None = None,
+    until: str | None = None,
+) -> list[dict]:
+    """Filter posts by date range."""
+    if not since and not until:
+        return posts
+
+    since_date = parse_date(since) if since else None
+    until_date = parse_date(until) if until else None
+
+    filtered = []
+    for post in posts:
+        post_date_str = post.get("post_date") or post.get("date")
+        if not post_date_str:
+            continue
+
+        # Handle both full datetime and date-only formats
+        try:
+            post_date = datetime.strptime(post_date_str[:10], "%Y-%m-%d")
+        except (ValueError, TypeError):
+            continue
+
+        if since_date and post_date < since_date:
+            continue
+        if until_date and post_date > until_date:
+            continue
+
+        filtered.append(post)
+
+    return filtered
 
 
 def fetch_single_post(
@@ -101,13 +141,27 @@ def fetch_newsletter(
         print(json.dumps(all_posts_data, indent=2, ensure_ascii=False))
 
 
-def list_posts(fetcher: SubstackFetcher, url: str, limit: int | None, output_dir: str | None, verbose: bool = False) -> None:
+def list_posts(
+    fetcher: SubstackFetcher,
+    url: str,
+    limit: int | None,
+    output_dir: str | None,
+    since: str | None = None,
+    until: str | None = None,
+    verbose: bool = False,
+) -> None:
     """List posts from a newsletter as JSON."""
     if verbose:
         print(f"[DEBUG] Fetching post list from: {url}", file=sys.stderr)
     posts = fetcher.get_posts(url, limit=limit, verbose=verbose)
     if verbose:
         print(f"[DEBUG] Found {len(posts)} posts", file=sys.stderr)
+
+    # Filter by date range
+    if since or until:
+        posts = filter_posts_by_date(posts, since=since, until=until)
+        if verbose:
+            print(f"[DEBUG] After date filter: {len(posts)} posts", file=sys.stderr)
 
     # Build clean list of post metadata
     posts_data = []
@@ -148,6 +202,8 @@ def fetch_from_list(
     delay: float,
     jitter: float,
     resume: bool,
+    since: str | None = None,
+    until: str | None = None,
     verbose: bool = False,
 ) -> None:
     """Fetch posts from a saved list JSON file."""
@@ -172,6 +228,11 @@ def fetch_from_list(
         return
 
     print(f"Loaded {len(posts)} posts from list", file=sys.stderr)
+
+    # Filter by date range
+    if since or until:
+        posts = filter_posts_by_date(posts, since=since, until=until)
+        print(f"After date filter: {len(posts)} posts", file=sys.stderr)
 
     # Create output directory
     output_path = Path(output_dir)
@@ -240,8 +301,14 @@ Examples:
   # List all posts to a JSON file (without fetching content)
   python main.py --newsletter https://newsletter.substack.com --list --all --output-dir ./posts
 
+  # List posts from a specific year
+  python main.py --newsletter https://newsletter.substack.com --list --all --since 2024-01-01 --until 2024-12-31
+
   # Fetch posts from a saved list with resume support
   python main.py --from-list ./posts/newsletter_posts.json --output-dir ./posts --resume
+
+  # Fetch only posts from 2024 from a saved list
+  python main.py --from-list ./posts/newsletter_posts.json --output-dir ./posts --since 2024-01-01 --until 2024-12-31
 
   # Fetch without comments
   python main.py --url https://newsletter.substack.com/p/post-slug --no-comments
@@ -322,6 +389,14 @@ Examples:
         action="store_true",
         help="Skip posts that already exist in output directory",
     )
+    parser.add_argument(
+        "--since",
+        help="Only include posts from this date onwards (YYYY-MM-DD)",
+    )
+    parser.add_argument(
+        "--until",
+        help="Only include posts up to this date (YYYY-MM-DD)",
+    )
 
     args = parser.parse_args()
 
@@ -354,10 +429,20 @@ Examples:
                 delay=args.delay,
                 jitter=args.jitter,
                 resume=args.resume,
+                since=args.since,
+                until=args.until,
                 verbose=args.verbose,
             )
         elif args.list:
-            list_posts(fetcher, args.newsletter, limit, args.output_dir, verbose=args.verbose)
+            list_posts(
+                fetcher,
+                args.newsletter,
+                limit,
+                args.output_dir,
+                since=args.since,
+                until=args.until,
+                verbose=args.verbose,
+            )
         else:
             fetch_newsletter(
                 fetcher,
