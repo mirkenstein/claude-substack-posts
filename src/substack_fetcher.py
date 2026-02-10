@@ -115,18 +115,24 @@ class SubstackFetcher:
         # Convert Post objects to dictionaries using their metadata
         result = []
         for i, post in enumerate(posts):
-            if hasattr(post, 'get_metadata'):
-                _log(f"Converting post {i+1}/{len(posts)} to metadata", verbose)
-                result.append(post.get_metadata())
-            elif isinstance(post, dict):
-                result.append(post)
-            else:
-                # Fallback: try to access common attributes
-                result.append({
-                    'slug': getattr(post, 'slug', None),
-                    'title': getattr(post, 'title', None),
-                    'id': getattr(post, 'id', None),
-                })
+            try:
+                if hasattr(post, 'get_metadata'):
+                    _log(f"Converting post {i+1}/{len(posts)} to metadata", verbose)
+                    result.append(post.get_metadata())
+                elif isinstance(post, dict):
+                    result.append(post)
+                else:
+                    # Fallback: try to access common attributes
+                    result.append({
+                        'slug': getattr(post, 'slug', None),
+                        'title': getattr(post, 'title', None),
+                        'id': getattr(post, 'id', None),
+                    })
+            except Exception as e:
+                # Skip posts that fail to fetch (e.g., 404 deleted posts)
+                _log(f"Skipping post {i+1}/{len(posts)}: {e}", verbose)
+                print(f"Warning: Skipping post {i+1}: {e}", file=sys.stderr)
+                continue
         _log(f"Converted {len(result)} posts to dictionaries", verbose)
         return result
 
