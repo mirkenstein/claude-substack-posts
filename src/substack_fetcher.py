@@ -314,3 +314,79 @@ class SubstackFetcher:
                 print(f"Error saving {post_url}: {e}", file=sys.stderr)
 
         return saved_files
+
+    def get_saved_posts(
+        self,
+        limit: int | None = None,
+        verbose: bool = False,
+    ) -> list[dict]:
+        """
+        Get posts from user's saved/bookmarked list.
+
+        Requires authentication via cookies.
+
+        Args:
+            limit: Maximum number of posts to fetch. None for all.
+            verbose: Enable debug logging.
+
+        Returns:
+            List of post dictionaries with metadata.
+        """
+        if not self.cookies_path:
+            raise ValueError("--saved requires authentication. Use --cookies to provide cookies.")
+
+        _log("Fetching saved posts from reader API", verbose)
+
+        all_posts = []
+        offset = 0
+        batch_size = 50  # Max allowed by API
+
+        while True:
+            endpoint = "https://substack.com/api/v1/reader/posts"
+            params = {
+                "inboxType": "saved",
+                "limit": batch_size,
+                "offset": offset,
+            }
+
+            _log(f"Fetching batch: offset={offset}, limit={batch_size}", verbose)
+            response = self.session.get(endpoint, params=params)
+            response.raise_for_status()
+
+            data = response.json()
+            posts = data.get("posts", [])
+
+            if not posts:
+                _log("No more posts returned", verbose)
+                break
+
+            # Transform to our standard format
+            for post in posts:
+                all_posts.append({
+                    "id": post.get("id"),
+                    "title": post.get("title", "Untitled"),
+                    "slug": post.get("slug", ""),
+                    "url": post.get("canonical_url", ""),
+                    "post_date": post.get("post_date"),
+                    "audience": post.get("audience"),
+                    "subtitle": post.get("subtitle"),
+                    "publication_id": post.get("publication_id"),
+                    "publication_name": post.get("publishedBylines", [{}])[0].get("publicationUsers", [{}])[0].get("publication", {}).get("name"),
+                })
+
+            _log(f"Fetched {len(posts)} posts, total: {len(all_posts)}", verbose)
+
+            # Check if we've reached the limit
+            if limit and len(all_posts) >= limit:
+                all_posts = all_posts[:limit]
+                break
+
+            # Check if we got fewer than requested (end of list)
+            if len(posts) < batch_size:
+                break
+
+            offset += batch_size
+            time.sleep(1)  # Be polite
+
+        _log(f"Total saved posts fetched: {len(all_posts)}", verbose)
+        return all_posts

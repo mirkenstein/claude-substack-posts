@@ -296,6 +296,66 @@ def fetch_from_list(
     print(f"\nDone: {fetched} fetched, {skipped} skipped, {errors} errors", file=sys.stderr)
 
 
+def list_saved_posts(
+    fetcher: SubstackFetcher,
+    limit: int | None,
+    output_dir: str | None,
+    since: str | None = None,
+    until: str | None = None,
+    audience: str | None = None,
+    verbose: bool = False,
+) -> None:
+    """List posts from user's saved/bookmarked list as JSON."""
+    if verbose:
+        print("[DEBUG] Fetching saved posts from reader API", file=sys.stderr)
+
+    posts = fetcher.get_saved_posts(limit=limit, verbose=verbose)
+
+    if verbose:
+        print(f"[DEBUG] Found {len(posts)} saved posts", file=sys.stderr)
+
+    # Filter by date range
+    if since or until:
+        posts = filter_posts_by_date(posts, since=since, until=until)
+        if verbose:
+            print(f"[DEBUG] After date filter: {len(posts)} posts", file=sys.stderr)
+
+    # Filter by audience
+    if audience:
+        posts = [p for p in posts if p.get("audience") == audience]
+        if verbose:
+            print(f"[DEBUG] After audience filter ({audience}): {len(posts)} posts", file=sys.stderr)
+
+    # Build output - include publication info since posts are from multiple sources
+    posts_data = []
+    for post in posts:
+        posts_data.append({
+            "title": post.get("title", "Untitled"),
+            "slug": post.get("slug", ""),
+            "url": post.get("url", ""),
+            "date": post.get("post_date", "")[:10] if post.get("post_date") else None,
+            "audience": post.get("audience"),
+            "subtitle": post.get("subtitle"),
+            "publication_name": post.get("publication_name"),
+        })
+
+    output = {
+        "source": "saved",
+        "count": len(posts_data),
+        "posts": posts_data,
+    }
+
+    json_str = json.dumps(output, indent=2, ensure_ascii=False)
+
+    if output_dir:
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
+        output_file = Path(output_dir) / "saved_posts.json"
+        output_file.write_text(json_str, encoding="utf-8")
+        print(f"Saved {len(posts_data)} posts to: {output_file}")
+    else:
+        print(json_str)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Fetch Substack articles and comments",
@@ -325,6 +385,9 @@ Examples:
 
   # Fetch without comments
   python main.py --url https://newsletter.substack.com/p/post-slug --no-comments
+
+  # List your saved/bookmarked posts
+  python main.py --saved --cookies cookies.json --all --output-dir ./saved
         """,
     )
 
@@ -340,6 +403,11 @@ Examples:
     parser.add_argument(
         "--from-list",
         help="Path to a posts list JSON file (from --list --output-dir)",
+    )
+    parser.add_argument(
+        "--saved",
+        action="store_true",
+        help="Fetch from your saved/bookmarked posts (requires --cookies)",
     )
 
     # Authentication
@@ -419,14 +487,17 @@ Examples:
     args = parser.parse_args()
 
     # Validate arguments
-    if not args.url and not args.newsletter and not args.from_list:
-        parser.error("Either --url, --newsletter, or --from-list is required")
+    if not args.url and not args.newsletter and not args.from_list and not args.saved:
+        parser.error("Either --url, --newsletter, --from-list, or --saved is required")
 
-    if sum(bool(x) for x in [args.url, args.newsletter, args.from_list]) > 1:
-        parser.error("Cannot use --url, --newsletter, and --from-list together")
+    if sum(bool(x) for x in [args.url, args.newsletter, args.from_list, args.saved]) > 1:
+        parser.error("Cannot use --url, --newsletter, --from-list, and --saved together")
 
     if args.from_list and not args.output_dir:
         parser.error("--from-list requires --output-dir")
+
+    if args.saved and not args.cookies:
+        parser.error("--saved requires --cookies for authentication")
 
     # Initialize fetcher
     fetcher = SubstackFetcher(cookies_path=args.cookies)
@@ -438,6 +509,16 @@ Examples:
     try:
         if args.url:
             fetch_single_post(fetcher, args.url, args.output, include_comments)
+        elif args.saved:
+            list_saved_posts(
+                fetcher,
+                limit,
+                args.output_dir,
+                since=args.since,
+                until=args.until,
+                audience=args.audience,
+                verbose=args.verbose,
+            )
         elif args.from_list:
             fetch_from_list(
                 fetcher,
