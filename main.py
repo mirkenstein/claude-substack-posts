@@ -148,6 +148,7 @@ def list_posts(
     output_dir: str | None,
     since: str | None = None,
     until: str | None = None,
+    audience: str | None = None,
     verbose: bool = False,
 ) -> None:
     """List posts from a newsletter as JSON."""
@@ -162,6 +163,12 @@ def list_posts(
         posts = filter_posts_by_date(posts, since=since, until=until)
         if verbose:
             print(f"[DEBUG] After date filter: {len(posts)} posts", file=sys.stderr)
+
+    # Filter by audience
+    if audience:
+        posts = [p for p in posts if p.get("audience") == audience]
+        if verbose:
+            print(f"[DEBUG] After audience filter ({audience}): {len(posts)} posts", file=sys.stderr)
 
     # Build clean list of post metadata
     posts_data = []
@@ -204,6 +211,7 @@ def fetch_from_list(
     resume: bool,
     since: str | None = None,
     until: str | None = None,
+    audience: str | None = None,
     verbose: bool = False,
 ) -> None:
     """Fetch posts from a saved list JSON file."""
@@ -233,6 +241,11 @@ def fetch_from_list(
     if since or until:
         posts = filter_posts_by_date(posts, since=since, until=until)
         print(f"After date filter: {len(posts)} posts", file=sys.stderr)
+
+    # Filter by audience
+    if audience:
+        posts = [p for p in posts if p.get("audience") == audience]
+        print(f"After audience filter ({audience}): {len(posts)} posts", file=sys.stderr)
 
     # Create output directory
     output_path = Path(output_dir)
@@ -397,6 +410,11 @@ Examples:
         "--until",
         help="Only include posts up to this date (YYYY-MM-DD)",
     )
+    parser.add_argument(
+        "--audience",
+        choices=["everyone", "only_paid"],
+        help="Only include posts with this audience (everyone or only_paid)",
+    )
 
     args = parser.parse_args()
 
@@ -431,6 +449,7 @@ Examples:
                 resume=args.resume,
                 since=args.since,
                 until=args.until,
+                audience=args.audience,
                 verbose=args.verbose,
             )
         elif args.list:
@@ -441,6 +460,7 @@ Examples:
                 args.output_dir,
                 since=args.since,
                 until=args.until,
+                audience=args.audience,
                 verbose=args.verbose,
             )
         else:
