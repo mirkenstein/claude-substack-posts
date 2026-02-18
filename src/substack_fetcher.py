@@ -339,7 +339,7 @@ class SubstackFetcher:
 
         all_posts = []
         offset = 0
-        batch_size = 50  # Max allowed by API
+        batch_size = 20  # API max limit is 20
 
         while True:
             endpoint = "https://substack.com/api/v1/reader/posts"
