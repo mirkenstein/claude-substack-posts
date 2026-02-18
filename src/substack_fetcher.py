@@ -69,6 +69,132 @@ class SubstackFetcher:
             return match.group(1)
         raise ValueError(f"Could not extract post slug from URL: {url}")
 
+    def _extract_post_id_from_inbox_url(self, url: str) -> int | None:
+        """Extract post ID from inbox URL format."""
+        # URL format: https://substack.com/inbox/post/78555703
+        match = re.search(r"/inbox/post/(\d+)", url)
+        if match:
+            return int(match.group(1))
+        return None
+
+    def get_post_by_id(self, post_id: int, verbose: bool = False) -> dict:
+        """
+        Get post data by numeric ID.
+
+        Args:
+            post_id: The numeric post ID.
+            verbose: Enable debug logging.
+
+        Returns:
+            Dictionary with post metadata.
+        """
+        _log(f"Fetching post by ID: {post_id}", verbose)
+
+        # Try the reader API first (works with authentication)
+        endpoint = f"https://substack.com/api/v1/posts/{post_id}"
+
+        response = self.session.get(endpoint)
+        response.raise_for_status()
+
+        return response.json()
+
+    def get_post_content_by_id(self, post_id: int, verbose: bool = False) -> dict:
+        """
+        Get full post content by numeric ID.
+
+        Args:
+            post_id: The numeric post ID.
+            verbose: Enable debug logging.
+
+        Returns:
+            Dictionary with post metadata and content.
+        """
+        post_data = self.get_post_by_id(post_id, verbose=verbose)
+
+        # The API returns full post data including body_html
+        return {
+            "metadata": {
+                "id": post_data.get("id"),
+                "title": post_data.get("title"),
+                "subtitle": post_data.get("subtitle"),
+                "slug": post_data.get("slug"),
+                "post_date": post_data.get("post_date"),
+                "audience": post_data.get("audience"),
+                "canonical_url": post_data.get("canonical_url"),
+                "publication_id": post_data.get("publication_id"),
+            },
+            "content": post_data.get("body_html", ""),
+            "is_paywalled": post_data.get("audience") == "only_paid",
+        }
+
+    def get_comments_by_post_id(
+        self,
+        post_id: int,
+        publication_url: str | None = None,
+        limit: int = 100,
+        verbose: bool = False,
+    ) -> list[dict]:
+        """
+        Get comments for a post by numeric ID.
+
+        Args:
+            post_id: The numeric post ID.
+            publication_url: The publication base URL (optional, will be fetched if not provided).
+            limit: Maximum number of comments to fetch.
+            verbose: Enable debug logging.
+
+        Returns:
+            List of comment dictionaries.
+        """
+        # If no publication URL, get it from the post data
+        if not publication_url:
+            post_data = self.get_post_by_id(post_id, verbose=verbose)
+            canonical_url = post_data.get("canonical_url", "")
+            if canonical_url:
+                publication_url = self._extract_publication_url(canonical_url)
+            else:
+                raise ValueError(f"Could not determine publication URL for post {post_id}")
+
+        _log(f"Fetching comments for post {post_id} from {publication_url}", verbose)
+
+        comments_url = f"{publication_url}/api/v1/post/{post_id}/comments"
+        params = {
+            "token": "",
+            "all_comments": "true",
+            "sort": "best_first",
+        }
+
+        response = self.session.get(comments_url, params=params)
+        response.raise_for_status()
+
+        data = response.json()
+        comments = data.get("comments", [])
+
+        return comments[:limit]
+
+    def get_post_with_comments_by_id(self, post_id: int, verbose: bool = False) -> dict:
+        """
+        Get a post with all its comments by numeric ID.
+
+        Args:
+            post_id: The numeric post ID.
+            verbose: Enable debug logging.
+
+        Returns:
+            Dictionary with post content and comments.
+        """
+        post_data = self.get_post_content_by_id(post_id, verbose=verbose)
+        canonical_url = post_data["metadata"].get("canonical_url", "")
+        publication_url = self._extract_publication_url(canonical_url) if canonical_url else None
+
+        comments = self.get_comments_by_post_id(post_id, publication_url=publication_url, verbose=verbose)
+
+        return {
+            **post_data,
+            "comments": comments,
+            "comment_count": len(comments),
+        }
+
     def get_newsletter(self, publication_url: str) -> Newsletter:
         """
         Get a Newsletter object for a publication.

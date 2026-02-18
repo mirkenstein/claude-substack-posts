@@ -64,7 +64,13 @@ def fetch_single_post(
     include_comments: bool,
 ) -> None:
     """Fetch a single post."""
-    print(f"Fetching post: {url}")
+    # Check if it's an inbox URL with numeric ID
+    post_id = fetcher._extract_post_id_from_inbox_url(url)
+    if post_id:
+        fetch_post_by_id(fetcher, post_id, output, include_comments)
+        return
+
+    print(f"Fetching post: {url}", file=sys.stderr)
 
     if include_comments:
         data = fetcher.get_post_with_comments(url)
@@ -73,7 +79,31 @@ def fetch_single_post(
 
     if output:
         fetcher.save_post(url, output, include_comments=include_comments)
-        print(f"Saved to: {output}")
+        print(f"Saved to: {output}", file=sys.stderr)
+    else:
+        print(json.dumps(data, indent=2, ensure_ascii=False))
+
+
+def fetch_post_by_id(
+    fetcher: SubstackFetcher,
+    post_id: int,
+    output: str | None,
+    include_comments: bool,
+    verbose: bool = False,
+) -> None:
+    """Fetch a single post by numeric ID."""
+    print(f"Fetching post by ID: {post_id}", file=sys.stderr)
+
+    if include_comments:
+        data = fetcher.get_post_with_comments_by_id(post_id, verbose=verbose)
+    else:
+        data = fetcher.get_post_content_by_id(post_id, verbose=verbose)
+
+    if output:
+        Path(output).parent.mkdir(parents=True, exist_ok=True)
+        with open(output, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        print(f"Saved to: {output}", file=sys.stderr)
     else:
         print(json.dumps(data, indent=2, ensure_ascii=False))
 
@@ -388,6 +418,12 @@ Examples:
 
   # List your saved/bookmarked posts
   python main.py --saved --cookies cookies.json --all --output-dir ./saved
+
+  # Fetch a post by numeric ID
+  python main.py --post-id 78555703 --cookies cookies.json
+
+  # Fetch using inbox URL format
+  python main.py --url https://substack.com/inbox/post/78555703 --cookies cookies.json
         """,
     )
 
@@ -408,6 +444,11 @@ Examples:
         "--saved",
         action="store_true",
         help="Fetch from your saved/bookmarked posts (requires --cookies)",
+    )
+    parser.add_argument(
+        "--post-id",
+        type=int,
+        help="Fetch a post by numeric ID (e.g., 78555703)",
     )
 
     # Authentication
@@ -487,11 +528,11 @@ Examples:
     args = parser.parse_args()
 
     # Validate arguments
-    if not args.url and not args.newsletter and not args.from_list and not args.saved:
-        parser.error("Either --url, --newsletter, --from-list, or --saved is required")
+    if not args.url and not args.newsletter and not args.from_list and not args.saved and not args.post_id:
+        parser.error("Either --url, --newsletter, --from-list, --saved, or --post-id is required")
 
-    if sum(bool(x) for x in [args.url, args.newsletter, args.from_list, args.saved]) > 1:
-        parser.error("Cannot use --url, --newsletter, --from-list, and --saved together")
+    if sum(bool(x) for x in [args.url, args.newsletter, args.from_list, args.saved, args.post_id]) > 1:
+        parser.error("Cannot use --url, --newsletter, --from-list, --saved, and --post-id together")
 
     if args.from_list and not args.output_dir:
         parser.error("--from-list requires --output-dir")
@@ -509,6 +550,8 @@ Examples:
     try:
         if args.url:
             fetch_single_post(fetcher, args.url, args.output, include_comments)
+        elif args.post_id:
+            fetch_post_by_id(fetcher, args.post_id, args.output, include_comments, verbose=args.verbose)
         elif args.saved:
             list_saved_posts(
                 fetcher,
