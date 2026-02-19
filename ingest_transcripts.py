@@ -152,12 +152,12 @@ def build_transcript_text(transcript: dict) -> str:
     return "\n".join(lines)
 
 
-def update_post_content(conn, post_id: int, html: str):
-    """Update posts.content_html with the transcript HTML."""
+def update_post_content(conn, post_id: int, html: str, plain_text: str):
+    """Update posts.content_html and content_text with the transcript."""
     with conn.cursor() as cur:
         cur.execute(
-            "UPDATE substack.posts SET content_html = %s WHERE id = %s",
-            (html, post_id),
+            "UPDATE substack.posts SET content_html = %s, content_text = %s WHERE id = %s",
+            (html, plain_text, post_id),
         )
     conn.commit()
 
@@ -351,11 +351,13 @@ def main():
             count = ingest_transcript_lines(conn, post_id, transcript)
             print(f"  transcript_lines: {count} segments inserted")
 
-            # Step 2: update content_html
+            # Step 2: update content_html and content_text
             if not args.skip_content_html:
                 html = build_transcript_html(transcript)
-                update_post_content(conn, post_id, html)
+                plain_text = build_transcript_text(transcript)
+                update_post_content(conn, post_id, html, plain_text)
                 print(f"  content_html: updated ({len(html)} chars)")
+                print(f"  content_text: updated ({len(plain_text)} chars)")
 
             # Step 3: Weaviate
             if not args.skip_weaviate:

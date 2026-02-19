@@ -2,7 +2,42 @@
 
 from __future__ import annotations
 
+import re
+from html.parser import HTMLParser
+
 from .link_classifier import extract_links_from_html, extract_links_from_text
+
+
+def strip_html(html: str) -> str:
+    """Convert HTML to plain text."""
+    if not html:
+        return ""
+    extractor = _HTMLTextExtractor()
+    extractor.feed(html)
+    text = "".join(extractor._pieces)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
+class _HTMLTextExtractor(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self._pieces = []
+        self._skip = False
+
+    def handle_starttag(self, tag, attrs):
+        if tag in ("script", "style"):
+            self._skip = True
+        elif tag in ("p", "br", "div", "h1", "h2", "h3", "h4", "li", "blockquote"):
+            self._pieces.append("\n")
+
+    def handle_endtag(self, tag):
+        if tag in ("script", "style"):
+            self._skip = False
+
+    def handle_data(self, data):
+        if not self._skip:
+            self._pieces.append(data)
 
 
 class PostLoader:
@@ -112,12 +147,12 @@ class PostLoader:
                     id, publication_id, primary_author_id, slug, title, subtitle,
                     canonical_url, post_date, updated_at, type, audience, is_paywalled,
                     wordcount, restacks, comment_count, cover_image, description,
-                    reactions, content_html
+                    reactions, content_html, content_text
                 ) VALUES (
                     %s, %s, %s, %s, %s, %s,
                     %s, %s, %s, %s, %s, %s,
                     %s, %s, %s, %s, %s,
-                    %s::jsonb, %s
+                    %s::jsonb, %s, %s
                 )
                 ON CONFLICT (id) DO UPDATE SET
                     title = EXCLUDED.title,
@@ -129,6 +164,7 @@ class PostLoader:
                     comment_count = EXCLUDED.comment_count,
                     reactions = EXCLUDED.reactions,
                     content_html = EXCLUDED.content_html,
+                    content_text = EXCLUDED.content_text,
                     loaded_at = NOW()
                 RETURNING id
             """, (
@@ -149,6 +185,7 @@ class PostLoader:
                 metadata.get('description'),
                 _json_or_none(reactions),
                 content_html,
+                strip_html(content_html),
             ))
             return cur.fetchone()[0]
 
