@@ -1,6 +1,14 @@
 #!/usr/bin/env python3
-"""Read posts from PostgreSQL, chunk if needed, and upload to Weaviate."""
+"""Read posts from PostgreSQL, chunk if needed, and upload to Weaviate.
 
+Usage:
+    python upload_posts.py                          # upload only new posts (since last run)
+    python upload_posts.py --all                    # re-upload everything
+    python upload_posts.py --publication anti-empire # upload one publication
+    python upload_posts.py --since '2026-02-18'     # posts loaded after a date
+"""
+
+import argparse
 import re
 import sys
 import time
@@ -87,7 +95,7 @@ def chunk_by_tokens(text: str) -> list[str]:
 # PostgreSQL query
 # ---------------------------------------------------------------------------
 
-POSTS_QUERY = """
+POSTS_QUERY_BASE = """
 SELECT
     p.id            AS post_id,
     p.title,
@@ -106,8 +114,49 @@ SELECT
 FROM posts p
 LEFT JOIN authors a   ON a.id = p.primary_author_id
 LEFT JOIN publications pub ON pub.id = p.publication_id
-ORDER BY p.post_date
 """
+
+# Watermark file to track last upload time
+WATERMARK_FILE = Path(__file__).parent / ".last_upload"
+
+
+def get_last_upload_time() -> str | None:
+    """Read the watermark timestamp from the last successful upload."""
+    if WATERMARK_FILE.exists():
+        return WATERMARK_FILE.read_text().strip()
+    return None
+
+
+def save_upload_time(timestamp: str):
+    """Save the current upload timestamp as watermark."""
+    WATERMARK_FILE.write_text(timestamp)
+
+
+def build_query(args) -> tuple[str, list]:
+    """Build SQL query and params based on CLI args."""
+    conditions = []
+    params = []
+
+    if args.since:
+        conditions.append("p.loaded_at >= %s")
+        params.append(args.since)
+    elif not args.all and not args.publication:
+        # Default: incremental from last upload watermark
+        last = get_last_upload_time()
+        if last:
+            conditions.append("p.loaded_at > %s")
+            params.append(last)
+
+    if args.publication:
+        conditions.append("pub.subdomain = %s")
+        params.append(args.publication)
+
+    query = POSTS_QUERY_BASE
+    if conditions:
+        query += "WHERE " + " AND ".join(conditions) + "\n"
+    query += "ORDER BY p.post_date"
+
+    return query, params
 
 
 def build_chunks(row: dict) -> list[dict]:
@@ -173,14 +222,32 @@ def build_chunks(row: dict) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 def main():
+    parser = argparse.ArgumentParser(description="Upload posts from PostgreSQL to Weaviate")
+    parser.add_argument("--all", action="store_true",
+                        help="Re-upload all posts (ignore watermark)")
+    parser.add_argument("--publication", metavar="SUBDOMAIN",
+                        help="Only upload posts from this publication subdomain")
+    parser.add_argument("--since", metavar="TIMESTAMP",
+                        help="Upload posts loaded after this timestamp (e.g. '2026-02-18')")
+    args = parser.parse_args()
+
+    query, params = build_query(args)
+
     # Read posts from Postgres
+    from datetime import datetime, timezone
+    upload_start = datetime.now(timezone.utc).isoformat()
+
     print("Reading posts from PostgreSQL...")
     with DatabaseConnection() as conn:
         with conn.cursor() as cur:
-            cur.execute(POSTS_QUERY)
+            cur.execute(query, params)
             columns = [desc[0] for desc in cur.description]
             rows = [dict(zip(columns, r)) for r in cur.fetchall()]
-    print(f"  {len(rows)} posts loaded")
+    print(f"  {len(rows)} posts to upload")
+
+    if not rows:
+        print("Nothing new to upload.")
+        return
 
     # Build chunks
     print("Chunking posts...")
@@ -223,6 +290,11 @@ def main():
 
         elapsed = time.time() - start
         print(f"Done: {uploaded - failed} uploaded, {failed} failed in {elapsed:.1f}s")
+
+        # Save watermark on success
+        if failed == 0:
+            save_upload_time(upload_start)
+            print(f"Watermark saved: {upload_start}")
 
         # Verify
         result = collection.aggregate.over_all(total_count=True)
