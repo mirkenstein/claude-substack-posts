@@ -1,8 +1,37 @@
 #!/usr/bin/env python3
 """Create SubstackPostEngRu and SubstackCommentEngRu collections in Weaviate."""
 
-from config import get_client, POSTS_COLLECTION, COMMENTS_COLLECTION
+from config import get_client, POSTS_COLLECTION, COMMENTS_COLLECTION, USE_EMBEDDED
 from weaviate.classes.config import Configure, Property, DataType
+
+
+def _posts_vector_config():
+    """Return vector config based on connection mode."""
+    if USE_EMBEDDED:
+        return Configure.Vectors.text2vec_jinaai(
+            model="jina-embeddings-v3",
+            dimensions=1024,
+            vectorize_collection_name=False,
+            source_properties=["content"],
+        )
+    return Configure.Vectors.text2vec_openai(
+        model="text-embedding-3-small",
+        dimensions=1536,
+        base_url="https://api.openai.com",
+        vectorize_collection_name=False,
+        source_properties=["content"],
+    )
+
+
+def _posts_reranker_config():
+    """Return reranker config based on connection mode."""
+    if USE_EMBEDDED:
+        return Configure.Reranker.jinaai(
+            model="jina-reranker-v2-base-multilingual",
+        )
+    return Configure.Reranker.cohere(
+        model="rerank-english-v3.0"
+    )
 
 
 def create_posts_collection(client):
@@ -10,16 +39,8 @@ def create_posts_collection(client):
     collection = client.collections.create(
         name=POSTS_COLLECTION,
         description="EngRu Substack posts chunked for semantic search",
-        vector_config=Configure.Vectors.text2vec_openai(
-            model="text-embedding-3-small",
-            dimensions=1536,
-            base_url="https://api.openai.com",
-            vectorize_collection_name=False,
-            source_properties=["content"],
-        ),
-        reranker_config=Configure.Reranker.cohere(
-            model="rerank-english-v3.0"
-        ),
+        vector_config=_posts_vector_config(),
+        reranker_config=_posts_reranker_config(),
         properties=[
             Property(name="content", data_type=DataType.TEXT,
                      description="Post content chunk (vectorized)"),
@@ -53,21 +74,31 @@ def create_posts_collection(client):
     return collection
 
 
+def _comments_vector_config():
+    """Return vector config for comments based on connection mode."""
+    if USE_EMBEDDED:
+        return Configure.Vectors.text2vec_jinaai(
+            model="jina-embeddings-v3",
+            dimensions=1024,
+            vectorize_collection_name=False,
+            source_properties=["body"],
+        )
+    return Configure.Vectors.text2vec_openai(
+        model="text-embedding-3-small",
+        dimensions=1536,
+        base_url="https://api.openai.com",
+        vectorize_collection_name=False,
+        source_properties=["body"],
+    )
+
+
 def create_comments_collection(client):
     """Create SubstackCommentEngRu collection for comment bodies."""
     collection = client.collections.create(
         name=COMMENTS_COLLECTION,
         description="EngRu Substack comments for semantic search",
-        vector_config=Configure.Vectors.text2vec_openai(
-            model="text-embedding-3-small",
-            dimensions=1536,
-            base_url="https://api.openai.com",
-            vectorize_collection_name=False,
-            source_properties=["body"],
-        ),
-        reranker_config=Configure.Reranker.cohere(
-            model="rerank-english-v3.0"
-        ),
+        vector_config=_comments_vector_config(),
+        reranker_config=_posts_reranker_config(),
         properties=[
             Property(name="body", data_type=DataType.TEXT,
                      description="Comment text (vectorized)"),

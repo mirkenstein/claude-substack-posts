@@ -1,5 +1,7 @@
 """Weaviate connection helper and shared constants for EngRu collections."""
 
+import os
+
 import weaviate
 
 # Collection names
@@ -14,9 +16,23 @@ MIN_CHUNK_SIZE = 400   # Minimum chunk size (merge small remainders)
 # Word count threshold for chunking (posts <= this are single objects)
 CHUNK_WORD_THRESHOLD = 5000
 
+# Connection mode: set WEAVIATE_EMBEDDED=1 to use embedded instance
+USE_EMBEDDED = os.environ.get("WEAVIATE_EMBEDDED", "").strip() in ("1", "true", "yes")
+
 
 def get_client() -> weaviate.WeaviateClient:
-    """Connect to local Weaviate instance."""
+    """Connect to Weaviate. Uses embedded if WEAVIATE_EMBEDDED=1, otherwise standalone."""
+    if USE_EMBEDDED:
+        api_key = os.environ.get("JINAAI_API_KEY")
+        headers = {"X-Jinaai-Api-Key": api_key} if api_key else {}
+        client = weaviate.connect_to_local(
+            host="127.0.0.1",
+            port=8079,
+            grpc_port=50060,
+            headers=headers,
+        )
+        return client
+
     client = weaviate.connect_to_local(
         host="127.0.0.1",
         port=8080,
