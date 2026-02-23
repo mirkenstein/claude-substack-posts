@@ -12,7 +12,9 @@ posts/{subdomain}/{subdomain}_posts.json  # Post metadata list
 posts/saved/images/{post_id}/       # Downloaded post images
 posts/saved/audio/{post_id}/        # Downloaded podcast audio
 transcribe/                         # Transcription scripts and outputs
-weaviate/                           # Weaviate upload scripts
+weaviate/                           # Weaviate vector search (primary)
+weaviate/embedded.py                # Experimental: embedded Weaviate with Jina AI
+lancedb/                            # Experimental: LanceDB with Jina AI embeddings
 twitter/                            # Twitter data ingestion (separate pipeline)
 src/                                # Core library code
 src/db/                             # Database connection and loader
@@ -116,3 +118,11 @@ See `INGEST_NEW_BLOG.md` for step-by-step commands (initial ingest + incremental
 - Paid content requires `--cookies cookies.json`
 - Post list files are archived with timestamp suffix before updates: `{blog}_posts.{YYYYMMDD_HHMMSS}.json`
 - Weaviate collection: `SubstackPostEngRu` (English and Russian content)
+
+## Vector Databases
+
+**Weaviate (primary)** — standalone Docker instance on port 8080/50051. Uses OpenAI `text-embedding-3-small` for embeddings and Cohere `rerank-english-v3.0` for reranking. This is the production vector store for all semantic search.
+
+**Weaviate Embedded (experimental)** — `weaviate/embedded.py` runs Weaviate in-process with Jina AI embeddings (`jina-embeddings-v3`, 1024 dims). Activate with `WEAVIATE_EMBEDDED=1 JINAAI_API_KEY=... python weaviate/embedded.py`. Data persists to `~/.local/share/weaviate-embedded/`.
+
+**LanceDB (experimental)** — `lancedb/` directory. Fully embedded (no server), uses Jina AI embeddings. Supports vector search, FTS, and hybrid search. Data persists to `~/.local/share/lancedb-substack/`. Activate with `JINA_API_KEY=... python lancedb/search.py "query"`.
