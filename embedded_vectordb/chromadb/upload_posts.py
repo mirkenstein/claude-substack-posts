@@ -18,7 +18,7 @@ from pathlib import Path
 
 import tiktoken
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from src.db.connection import DatabaseConnection
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -30,8 +30,8 @@ OVERLAP = 150
 MIN_CHUNK_SIZE = 400
 CHUNK_WORD_THRESHOLD = 5000
 
-# ChromaDB batch limit
-BATCH_SIZE = 100
+# ChromaDB batch limit (keep small to avoid Jina token rate limits)
+BATCH_SIZE = 50
 
 tokenizer = tiktoken.get_encoding("cl100k_base")
 
@@ -252,7 +252,15 @@ def main():
         documents = [c["content"] for c in batch]
         metadatas = [{k: v for k, v in c.items() if k != "content"} for c in batch]
 
-        collection.upsert(ids=ids, documents=documents, metadatas=metadatas)
+        try:
+            collection.upsert(ids=ids, documents=documents, metadatas=metadatas)
+        except RuntimeError as e:
+            if "rate limit" in str(e).lower():
+                print(f"  Rate limited at {uploaded}/{len(all_chunks)}, waiting 60s...")
+                time.sleep(60)
+                collection.upsert(ids=ids, documents=documents, metadatas=metadatas)
+            else:
+                raise
         uploaded += len(batch)
 
         if uploaded % 200 < BATCH_SIZE:
