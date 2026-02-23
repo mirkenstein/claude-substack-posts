@@ -14,7 +14,7 @@ posts/saved/audio/{post_id}/        # Downloaded podcast audio
 transcribe/                         # Transcription scripts and outputs
 weaviate/                           # Weaviate vector search (primary)
 weaviate/embedded.py                # Experimental: embedded Weaviate with Jina AI
-lancedb/                            # Experimental: LanceDB with Jina AI embeddings
+embedded_vectordb/                  # Experimental: LanceDB and ChromaDB with Jina AI
 twitter/                            # Twitter data ingestion (separate pipeline)
 src/                                # Core library code
 src/db/                             # Database connection and loader
@@ -125,4 +125,8 @@ See `INGEST_NEW_BLOG.md` for step-by-step commands (initial ingest + incremental
 
 **Weaviate Embedded (experimental)** — `weaviate/embedded.py` runs Weaviate in-process with Jina AI embeddings (`jina-embeddings-v3`, 1024 dims). Activate with `WEAVIATE_EMBEDDED=1 JINAAI_API_KEY=... python weaviate/embedded.py`. Data persists to `~/.local/share/weaviate-embedded/`.
 
-**LanceDB (experimental)** — `lancedb/` directory. Fully embedded (no server), uses Jina AI embeddings. Supports vector search, FTS, and hybrid search. Data persists to `~/.local/share/lancedb-substack/`. Activate with `JINA_API_KEY=... python lancedb/search.py "query"`.
+**LanceDB (experimental)** — `embedded_vectordb/lancedb/`. Fully embedded (no server), uses Jina AI embeddings. Supports vector, FTS, and hybrid search. Data persists to `~/.local/share/lancedb-substack/`.
+
+**ChromaDB (experimental)** — `embedded_vectordb/chromadb/`. Persistent embedded client with Jina AI embeddings. Required a manual patch for Python 3.14 compatibility. Data persists to `~/.local/share/chromadb-substack/`.
+
+See `embedded_vectordb/README.md` for full comparison and usage.
