@@ -17,11 +17,21 @@ Usage:
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
+
+# Load API keys from weaviate/docker/.env if not already in environment
+_ENV_FILE = Path(__file__).parent / "weaviate" / "docker" / ".env"
+if _ENV_FILE.exists():
+    for line in _ENV_FILE.read_text().splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            key, _, value = line.partition("=")
+            os.environ.setdefault(key.strip(), value.strip())
 
 from src.db.connection import DatabaseConnection
 from src.image_analyzer import analyze_image, SUPPORTED_MODELS

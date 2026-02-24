@@ -31,6 +31,7 @@ src/db/                             # Database connection and loader
 | `weaviate/upload_posts.py` | Upload posts to Weaviate. Watermark-based incremental uploads (`--publication`) |
 | `refresh_blog.py` | End-to-end incremental refresh: diff, fetch, load, upload. Convenience wrapper |
 | `download_media.py` | Extract and download images/audio from posts |
+| `analyze_media.py` | Two-pass LLM image analysis (see Media Analysis section below) |
 | `ingest_transcripts.py` | Load podcast transcripts into `transcript_lines` table and Weaviate |
 
 ### load_posts.py vs refresh_blog.py postgres loading
@@ -72,6 +73,54 @@ python external_sources/load_external.py --recreate --no-load     # just recreat
 - Duplicate URLs across files (e.g. same topwar article in `topwar_articles.json` and `topwar_other_articles.json`) are merged silently
 - JSON files go in `external_sources/scraped_data/`
 - `--recreate` runs `DROP SCHEMA external CASCADE` then re-runs the SQL file — use when schema changes
+
+### Media Download and Analysis
+
+**Download** (`download_media.py`) extracts image/audio URLs from posts and downloads them locally:
+
+```bash
+python download_media.py --extract                    # populate post_media table from HTML
+python download_media.py --download                   # download all undownloaded media
+python download_media.py --download --type image      # images only
+python download_media.py --download --type cover_image
+python download_media.py --download --type audio
+python download_media.py --extract --download         # both steps
+```
+
+**Analysis** (`analyze_media.py`) uses a two-pass LLM workflow on downloaded images:
+
+- **Pass 1** — Fast triage with local Ollama (`gemma3:27b`). Produces description, category, and basic data extraction for every image.
+- **Pass 2** — Deep analysis with Anthropic Haiku on "critical" categories only: `screenshot`, `tweet`, `document`, `chart`, `table`, `infographic`, `map`. Includes pass-1 results as context.
+
+```bash
+# Pass 1: run on all unanalyzed images (default model: ollama/gemma3:27b)
+PYTHONUNBUFFERED=1 nohup python analyze_media.py > analyze_pass1.log 2>&1 &
+
+# Monitor progress
+tail -f analyze_pass1.log
+
+# Pass 2: deep analysis on critical images with Haiku
+python analyze_media.py --pass2 --api-key 'sk-ant-...'
+
+# Other options
+python analyze_media.py --model ollama/qwen2.5vl:32b  # different ollama model
+python analyze_media.py --publication kk               # one publication only
+python analyze_media.py --limit 50                     # test run
+python analyze_media.py --reanalyze                    # redo already-analyzed
+python analyze_media.py --type cover_image             # cover images only
+```
+
+How it works:
+- Reads from `post_media` where `downloaded_at IS NOT NULL` and `analyzed_at IS NULL` (resume-safe)
+- Pass 2 filters: `image_category IN (critical set)` AND `analysis_model NOT LIKE 'claude%'`
+- Saves JSON analysis alongside each image: `{image}.analysis.json`
+- Updates DB columns: `image_description`, `image_data` (JSONB), `image_category`, `analysis_model`, `analyzed_at`
+- `image_data` JSONB contains: `extracted_text`, `entities`, `chart_description`, `chart_data`, `source`, `date_depicted`
+- After pass 1, prints category breakdown showing which categories are critical for pass 2
+
+Key files:
+- `analyze_media.py` — CLI orchestrator
+- `src/image_analyzer.py` — LLM vision backends (Anthropic, Ollama), prompt templates, JSON parsing, magic-bytes MIME detection
 
 ### Wayback Machine
 
@@ -121,7 +170,14 @@ See `INGEST_NEW_BLOG.md` for step-by-step commands (initial ingest + incremental
 
 ## Vector Databases
 
-**Weaviate (primary)** — standalone Docker instance on port 8080/50051. Uses OpenAI `text-embedding-3-small` for embeddings and Cohere `rerank-english-v3.0` for reranking. This is the production vector store for all semantic search.
+**Weaviate (primary)** — standalone Docker instance on port 8080/50051. Docker config in `weaviate/docker/`. API keys in `weaviate/docker/.env` (not committed; see `.env.example`). Config auto-loaded by `weaviate/config.py`.
+
+Collections:
+- `SubstackPostEngRu` — post chunks, OpenAI `text-embedding-3-small`, Cohere reranker
+- `SubstackCommentEngRu` — individual comments, OpenAI embeddings
+- `VideoChunkEngRu` — YouTube transcript chunks, JinaAI v3 `jina-embeddings-v3` (1024 dim), JinaAI reranker
+
+Upload scripts: `weaviate/upload_posts.py`, `weaviate/upload_comments.py`, `weaviate/upload_videos.py`
 
 **Weaviate Embedded (experimental)** — `weaviate/embedded.py` runs Weaviate in-process with Jina AI embeddings (`jina-embeddings-v3`, 1024 dims). Activate with `WEAVIATE_EMBEDDED=1 JINAAI_API_KEY=... python weaviate/embedded.py`. Data persists to `~/.local/share/weaviate-embedded/`.
 

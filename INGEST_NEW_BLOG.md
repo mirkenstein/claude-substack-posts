@@ -38,6 +38,26 @@ python load_posts.py --dir posts/${BLOG}/ --resume --log etl_${BLOG}.log -v
 python weaviate/upload_posts.py --publication ${BLOG}
 ```
 
+### Step 5: Download and analyze images
+
+```bash
+# Extract media URLs from posts and download images
+python download_media.py --extract --download --type image --publication ${BLOG}
+python download_media.py --download --type cover_image --publication ${BLOG}
+
+# Pass 1: fast triage with local Ollama (gemma3:27b) — runs ~3.5 sec/image
+# Use nohup for large publications; PYTHONUNBUFFERED=1 ensures log is written in real time
+PYTHONUNBUFFERED=1 nohup python analyze_media.py --publication ${BLOG} > analyze_${BLOG}.log 2>&1 &
+tail -f analyze_${BLOG}.log
+
+# Pass 2: deep analysis on critical images (screenshot/tweet/chart/document/table/infographic/map)
+python analyze_media.py --pass2 --publication ${BLOG} --api-key 'sk-ant-...'
+```
+
+The default model for pass 1 is `ollama/gemma3:27b`. You can use `--model ollama/qwen2.5vl:32b` or any other Ollama vision model. Pass 2 defaults to Anthropic Haiku.
+
+Analysis results are saved both to the DB (`post_media` columns) and as JSON files alongside each image (`{image}.analysis.json`).
+
 ### Verify
 
 ```bash
