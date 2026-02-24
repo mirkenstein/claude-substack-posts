@@ -1,0 +1,106 @@
+# Twitter / X Data — Project File Index
+# @marmar_ae (Marko Marjanović) archive + analysis infrastructure
+# Last updated: 2026-02-21
+#
+# Database: PostgreSQL schema `twitter` via postgres-substack MCP
+# Total tweets: 16,227 | Marko tweets: 2,591 | Date range: 2015-04-26 → 2025-12-26
+
+# ═══════════════════════════════════════════════════════════
+# DATABASE SCRIPTS
+# ═══════════════════════════════════════════════════════════
+
+# create_twitter_tables.sql
+#   DDL for twitter.twitter_tweets, twitter.twitter_users, twitter.twitter_scrape_log
+#   Includes GIN indexes for full-text search, trigram indexes, views
+#   Run once to create schema
+
+# load_twitter_apify.py
+#   ETL loader for Apify Twitter Scraper JSON exports
+#   Handles: main tweets, embedded QTs, embedded parents, user profiles
+#   Features: dedup, threading backfill, batch upsert, --dry-run mode
+#   Usage: python3 load_twitter_apify.py dataset.json [--db URL] [--primary @marmar_ae]
+
+# ═══════════════════════════════════════════════════════════
+# SCRAPER SCRIPTS (for future use — not yet operational)
+# ═══════════════════════════════════════════════════════════
+
+# twitter_graphql_scraper.py
+#   Direct GraphQL API scraper (requires auth tokens)
+#   Designed for conversation thread reconstruction
+
+# snscrape_conversations.py
+#   snscrape-based conversation fetcher
+
+# twscrape_conversations.py
+#   twscrape-based conversation fetcher
+
+# ═══════════════════════════════════════════════════════════
+# APIFY URL LISTS — for thread backfill scraping
+# ═══════════════════════════════════════════════════════════
+
+# apify_threads_2022_2023.txt
+#   24 URLs across 5 conversation clusters
+#   Coverage: RWApodcast TIME cover (Mar 2022), @akarlin Karabakh (Nov 2022),
+#   US ammo production (Dec 2022), Wagner mutiny mega-thread (Jun 2023),
+#   Habsburg map (Sep 2023), Gaza @bobWaltzer debate (Nov 2023)
+#   Status: LOADED ✓
+
+# apify_substack_citations.txt
+#   13 unique Marko tweets embedded in 9 Substack articles (7 Anti-Empire, 2 Slavsquat)
+#   Topics: mobilization dysfunction, ammo production, Merkel lies, Abrams tanks,
+#   Iran/China dynamics, shell hunger, Wagner mutiny, Putin ATACMS red line
+#   12/13 in DB. 1 MISSING: 1607665164689756164 (shell hunger, ~Dec 27 2022)
+#   Status: MOSTLY LOADED — 1 tweet still needs scraping
+
+# apify_thread_urls_pre_dec2024.txt
+#   314 URLs covering all pre-December 2024 orphaned threads
+#   Bulk: ~280 November 2024 orphaned replies (post-election Twitter explosion)
+#   Plus: early 2024 sparse tweets (Feb Slavic expansion, Apr-Sep one-offs)
+#   Plus: 2022-2023 threads (subset of apify_threads_2022_2023.txt)
+#   Status: PARTIALLY LOADED — Nov 2024 bulk still needs scraping
+
+# ═══════════════════════════════════════════════════════════
+# DATA SOURCES LOADED (by scrape_source tag)
+# ═══════════════════════════════════════════════════════════
+
+# marmar_ae_d1_conversation .............. 3,151 tweets (conversation-mode scrape)
+# marmar_ae_d2_timeline .................. 1,174 tweets (timeline scrape)
+# marmar_ae_d3_hybrid .................... 2,325 tweets (hybrid approach)
+# apify_threads-dataset_*_21-31-54 ....... 7,536 tweets + 198 embedded QTs (thread backfill)
+# apify_dataset_*_22-37-25 ............... 25 + 1 QT
+# apify_dataset_*_23-00-50 ............... 100 + 1 QT
+# apify_dataset_*_23-22-42 ............... 1,553 + 34 QTs (large batch)
+# apify_dataset_*_23-24-48 ............... 63
+# apify_dataset_*_23-40-41 ............... 12
+# apify_dataset_*_23-48-16 ............... 52 + 2 QTs (substack crossref batch)
+
+# ═══════════════════════════════════════════════════════════
+# COVERAGE GAPS & KNOWN ISSUES
+# ═══════════════════════════════════════════════════════════
+
+# 1. Pre-2022: No tweets. Account scrape starts Mar 2, 2022.
+#    Marko's Twitter activity before the invasion is not captured.
+
+# 2. 2022 (6 tweets): Fully threaded. All conversation roots identified.
+
+# 3. 2023 (49 tweets): Fully threaded. Wagner thread is the crown jewel (34 tweets).
+
+# 4. 2024 Jan-Oct (9 tweets): Sparse but complete. Feb Slavic expansion (98 likes),
+#    Apr Agent Orange, May wall joke, Jul name correction, Sep Syria/energy threads.
+
+# 5. 2024 Nov (492 tweets): MAJOR GAP. ~280 orphaned replies with no threading data.
+#    Covers: Trump election analysis, cabinet picks, ATACMS authorization,
+#    mobilization economics deep-dives, Syria collapse, China pessimism.
+#    Needs: apify_thread_urls_pre_dec2024.txt scraping run.
+
+# 6. 2024 Dec (445 tweets): Threading status TBD — check separately.
+
+# 7. 2025 (bulk of DB): Best-covered period from initial scrapes.
+
+# 8. Missing tweet: 1607665164689756164 (~Dec 27 2022) — shell hunger / 60K shells daily.
+#    Cited in Slavsquat's "Russia's Completely Avoidable Shell Hunger in Ukraine".
+#    Needs individual Apify scrape.
+
+# 9. Two tweets with NULL content: 1574721819415814145 (Sep 27 2022) and
+#    1606732942830702593 (Dec 24 2022) — likely image/media-only posts.
+#    Content recoverable from raw_json column if needed.

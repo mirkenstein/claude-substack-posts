@@ -1,18 +1,38 @@
-"""Analyze images using LLM vision APIs (Anthropic or Ollama)."""
+"""Analyze images using LLM vision APIs (Anthropic, OpenAI, or Ollama)."""
 
 from __future__ import annotations
 
 import base64
 import json
 import mimetypes
+import os
 from pathlib import Path
 
-SUPPORTED_MODELS = {"haiku", "sonnet"}
+# Load API keys from weaviate/docker/.env if not already in environment
+_ENV_FILE = Path(__file__).parent.parent / "weaviate" / "docker" / ".env"
+if _ENV_FILE.exists():
+    for _line in _ENV_FILE.read_text().splitlines():
+        _line = _line.strip()
+        if _line and not _line.startswith("#") and "=" in _line:
+            _k, _, _v = _line.partition("=")
+            os.environ.setdefault(_k.strip(), _v.strip())
+    # Map non-standard env var names to what the SDKs expect
+    if os.environ.get("OPENAI_APIKEY") and not os.environ.get("OPENAI_API_KEY"):
+        os.environ["OPENAI_API_KEY"] = os.environ["OPENAI_APIKEY"]
+    if os.environ.get("ANTHROPIC_APIKEY") and not os.environ.get("ANTHROPIC_API_KEY"):
+        os.environ["ANTHROPIC_API_KEY"] = os.environ["ANTHROPIC_APIKEY"]
+
+SUPPORTED_MODELS = {"haiku", "sonnet", "gpt4o", "gpt4o-mini"}
 
 # Map friendly names to model IDs
 _ANTHROPIC_MODELS = {
     "haiku": "claude-haiku-4-5-20251001",
     "sonnet": "claude-sonnet-4-5-20250929",
+}
+
+_OPENAI_MODELS = {
+    "gpt4o": "gpt-4o",
+    "gpt4o-mini": "gpt-4o-mini",
 }
 
 # ── Prompts ──────────────────────────────────────────────────────────────────
@@ -96,6 +116,8 @@ You are doing a DEEP pass. Focus on:
         raw = _call_ollama(image_path, prompt, ollama_model)
     elif model in _ANTHROPIC_MODELS:
         raw = _call_anthropic(image_path, prompt, _ANTHROPIC_MODELS[model])
+    elif model in _OPENAI_MODELS:
+        raw = _call_openai(image_path, prompt, _OPENAI_MODELS[model])
     else:
         raise ValueError(f"Unsupported model: {model}")
 
@@ -135,6 +157,40 @@ def _call_anthropic(image_path: str, prompt: str, model_id: str) -> str:
     )
 
     return message.content[0].text
+
+
+# ── OpenAI ───────────────────────────────────────────────────────────────────
+
+def _call_openai(image_path: str, prompt: str, model_id: str) -> str:
+    """Call OpenAI vision API."""
+    from openai import OpenAI
+
+    client = OpenAI()
+    image_data = Path(image_path).read_bytes()
+    media_type = _get_media_type(image_path)
+    b64 = base64.b64encode(image_data).decode()
+
+    response = client.chat.completions.create(
+        model=model_id,
+        max_tokens=1500,
+        messages=[{
+            "role": "user",
+            "content": [
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:{media_type};base64,{b64}",
+                    },
+                },
+                {
+                    "type": "text",
+                    "text": prompt,
+                },
+            ],
+        }],
+    )
+
+    return response.choices[0].message.content
 
 
 # ── Ollama ───────────────────────────────────────────────────────────────────

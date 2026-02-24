@@ -6,8 +6,10 @@ Two-pass workflow:
   Pass 2 (haiku):   Deep analysis on text-heavy/data-rich images only
 
 Usage:
-    python analyze_media.py                                    # pass 1: all unanalyzed with gemma3
+    python analyze_media.py  1                                  # pass 1: all unanalyzed with gemma3
     python analyze_media.py --model ollama/gemma3:27b          # explicit model
+    python analyze_media.py --model gpt4o                      # OpenAI GPT-4o
+    python analyze_media.py --model gpt4o-mini                 # OpenAI GPT-4o-mini (cheaper)
     python analyze_media.py --pass2 --api-key sk-...           # pass 2: Haiku on critical images
     python analyze_media.py --publication kk                   # one publication
     python analyze_media.py --limit 50                         # test run
@@ -139,7 +141,7 @@ def update_media_error(conn, media_id: int, error: str, model_name: str):
 def main():
     parser = argparse.ArgumentParser(description="Analyze images with LLM vision")
     parser.add_argument("--model", default=None,
-                        help="Model: 'haiku', 'sonnet', or 'ollama/<model>'")
+                        help="Model: 'haiku', 'sonnet', 'gpt4o', 'gpt4o-mini', or 'ollama/<model>'")
     parser.add_argument("--pass2", action="store_true",
                         help="Pass 2: re-analyze critical images (screenshot/tweet/chart/...) with Haiku")
     parser.add_argument("--publication", "-p",
