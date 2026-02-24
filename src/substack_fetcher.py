@@ -131,7 +131,7 @@ class SubstackFetcher:
         self,
         post_id: int,
         publication_url: str | None = None,
-        limit: int = 100,
+        limit: int = 500,
         verbose: bool = False,
     ) -> list[dict]:
         """
@@ -140,11 +140,11 @@ class SubstackFetcher:
         Args:
             post_id: The numeric post ID.
             publication_url: The publication base URL (optional, will be fetched if not provided).
-            limit: Maximum number of comments to fetch.
+            limit: Maximum number of top-level comments to fetch.
             verbose: Enable debug logging.
 
         Returns:
-            List of comment dictionaries.
+            List of comment dictionaries with all nested children.
         """
         # If no publication URL, get it from the post data
         if not publication_url:
@@ -155,22 +155,7 @@ class SubstackFetcher:
             else:
                 raise ValueError(f"Could not determine publication URL for post {post_id}")
 
-        _log(f"Fetching comments for post {post_id} from {publication_url}", verbose)
-
-        comments_url = f"{publication_url}/api/v1/post/{post_id}/comments"
-        params = {
-            "token": "",
-            "all_comments": "true",
-            "sort": "best_first",
-        }
-
-        response = self.session.get(comments_url, params=params)
-        response.raise_for_status()
-
-        data = response.json()
-        comments = data.get("comments", [])
-
-        return comments[:limit]
+        return self._fetch_all_comments(publication_url, post_id, limit=limit, verbose=verbose)
 
     def get_post_with_comments_by_id(self, post_id: int, verbose: bool = False) -> dict:
         """
@@ -188,11 +173,12 @@ class SubstackFetcher:
         publication_url = self._extract_publication_url(canonical_url) if canonical_url else None
 
         comments = self.get_comments_by_post_id(post_id, publication_url=publication_url, verbose=verbose)
+        total = self._count_all_comments(comments)
 
         return {
             **post_data,
             "comments": comments,
-            "comment_count": len(comments),
+            "comment_count": total,
         }
 
     def get_newsletter(self, publication_url: str) -> Newsletter:
@@ -297,6 +283,7 @@ class SubstackFetcher:
         self,
         post_url: str,
         limit: int = 100,
+        verbose: bool = False,
     ) -> list[dict]:
         """
         Get comments for a post.
@@ -306,7 +293,8 @@ class SubstackFetcher:
 
         Args:
             post_url: The full URL to the Substack post.
-            limit: Maximum number of comments to fetch.
+            limit: Maximum number of top-level comments to fetch.
+            verbose: Enable debug logging.
 
         Returns:
             List of comment dictionaries.
@@ -322,39 +310,165 @@ class SubstackFetcher:
         if not post_id:
             raise ValueError(f"Could not get post ID for: {post_url}")
 
-        # Fetch comments using the Substack API
+        return self._fetch_all_comments(publication_url, post_id, limit=limit, verbose=verbose)
+
+    def _fetch_all_comments(
+        self,
+        publication_url: str,
+        post_id: int,
+        limit: int = 500,
+        verbose: bool = False,
+    ) -> list[dict]:
+        """
+        Fetch all comments for a post with pagination and nested replies.
+
+        Args:
+            publication_url: The publication base URL.
+            post_id: The numeric post ID.
+            limit: Maximum number of top-level comments to fetch.
+            verbose: Enable debug logging.
+
+        Returns:
+            List of comment dictionaries with all nested children.
+        """
         comments_url = f"{publication_url}/api/v1/post/{post_id}/comments"
-        params = {
-            "token": "",
-            "all_comments": "true",
-            "sort": "best_first",
-        }
+        all_comments = []
+        token = ""
 
-        response = self.session.get(comments_url, params=params)
-        response.raise_for_status()
+        while True:
+            params = {
+                "token": token,
+                "all_comments": "true",
+                "sort": "best_first",
+            }
 
-        data = response.json()
-        comments = data.get("comments", [])
+            _log(f"Fetching comments batch (token={token[:20] + '...' if token else 'initial'})", verbose)
+            response = self.session.get(comments_url, params=params)
+            response.raise_for_status()
 
-        return comments[:limit]
+            data = response.json()
+            comments = data.get("comments", [])
 
-    def get_post_with_comments(self, post_url: str) -> dict:
+            if not comments:
+                break
+
+            # For each comment, recursively fetch all children
+            for comment in comments:
+                self._fetch_nested_children(publication_url, post_id, comment, verbose=verbose)
+                all_comments.append(comment)
+
+            _log(f"Fetched {len(comments)} top-level comments, total: {len(all_comments)}", verbose)
+
+            # Check pagination token
+            next_token = data.get("token")
+            if not next_token or next_token == token:
+                break
+
+            token = next_token
+
+            if limit and len(all_comments) >= limit:
+                all_comments = all_comments[:limit]
+                break
+
+            time.sleep(0.5)  # Be polite between pages
+
+        _log(f"Total comments fetched: {len(all_comments)} (including nested: {self._count_all_comments(all_comments)})", verbose)
+        return all_comments
+
+    def _fetch_nested_children(
+        self,
+        publication_url: str,
+        post_id: int,
+        comment: dict,
+        verbose: bool = False,
+    ) -> None:
+        """
+        Recursively fetch all nested child comments.
+
+        If a comment has more children than what was returned,
+        fetch the remaining children via the API.
+
+        Args:
+            publication_url: The publication base URL.
+            post_id: The numeric post ID.
+            comment: The parent comment dict (modified in place).
+            verbose: Enable debug logging.
+        """
+        children = comment.get("children", [])
+        child_count = comment.get("childCount", len(children))
+
+        # If there are more children than returned, fetch them
+        if child_count > len(children) and comment.get("id"):
+            _log(f"Comment {comment['id']} has {child_count} children but only {len(children)} loaded, fetching rest...", verbose)
+
+            comment_id = comment["id"]
+            child_url = f"{publication_url}/api/v1/post/{post_id}/comment/{comment_id}/comments"
+            token = ""
+
+            fetched_children = []
+            while True:
+                params = {
+                    "token": token,
+                    "all_comments": "true",
+                    "sort": "best_first",
+                }
+
+                response = self.session.get(child_url, params=params)
+                if not response.ok:
+                    _log(f"Failed to fetch children for comment {comment_id}: {response.status_code}", verbose)
+                    break
+
+                data = response.json()
+                batch = data.get("comments", [])
+
+                if not batch:
+                    break
+
+                fetched_children.extend(batch)
+
+                next_token = data.get("token")
+                if not next_token or next_token == token:
+                    break
+
+                token = next_token
+                time.sleep(0.3)
+
+            if fetched_children:
+                comment["children"] = fetched_children
+                _log(f"Loaded {len(fetched_children)} children for comment {comment_id}", verbose)
+
+        # Recursively fetch children of children
+        for child in comment.get("children", []):
+            self._fetch_nested_children(publication_url, post_id, child, verbose=verbose)
+
+    @staticmethod
+    def _count_all_comments(comments: list[dict]) -> int:
+        """Count total comments including all nested children."""
+        count = 0
+        for comment in comments:
+            count += 1
+            count += SubstackFetcher._count_all_comments(comment.get("children", []))
+        return count
+
+    def get_post_with_comments(self, post_url: str, verbose: bool = False) -> dict:
         """
         Get a post with all its comments.
 
         Args:
             post_url: The full URL to the Substack post.
+            verbose: Enable debug logging.
 
         Returns:
             Dictionary with post content and comments.
         """
         post_data = self.get_post_content(post_url)
-        comments = self.get_comments(post_url)
+        comments = self.get_comments(post_url, verbose=verbose)
+        total = self._count_all_comments(comments)
 
         return {
             **post_data,
             "comments": comments,
-            "comment_count": len(comments),
+            "comment_count": total,
         }
 
     def save_post(
@@ -362,6 +476,7 @@ class SubstackFetcher:
         post_url: str,
         output_path: str,
         include_comments: bool = True,
+        verbose: bool = False,
     ) -> None:
         """
         Save a post (and optionally comments) to a JSON file.
@@ -370,9 +485,10 @@ class SubstackFetcher:
             post_url: The full URL to the Substack post.
             output_path: Path to save the JSON file.
             include_comments: Whether to include comments.
+            verbose: Enable debug logging.
         """
         if include_comments:
-            data = self.get_post_with_comments(post_url)
+            data = self.get_post_with_comments(post_url, verbose=verbose)
         else:
             data = self.get_post_content(post_url)
 
@@ -426,6 +542,7 @@ class SubstackFetcher:
                     post_url,
                     str(file_path),
                     include_comments=include_comments,
+                    verbose=verbose,
                 )
                 saved_files.append(str(file_path))
                 print(f"Saved: {file_path}", file=sys.stderr)

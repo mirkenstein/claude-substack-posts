@@ -62,23 +62,24 @@ def fetch_single_post(
     url: str,
     output: str | None,
     include_comments: bool,
+    verbose: bool = False,
 ) -> None:
     """Fetch a single post."""
     # Check if it's an inbox URL with numeric ID
     post_id = fetcher._extract_post_id_from_inbox_url(url)
     if post_id:
-        fetch_post_by_id(fetcher, post_id, output, include_comments)
+        fetch_post_by_id(fetcher, post_id, output, include_comments, verbose=verbose)
         return
 
     print(f"Fetching post: {url}", file=sys.stderr)
 
     if include_comments:
-        data = fetcher.get_post_with_comments(url)
+        data = fetcher.get_post_with_comments(url, verbose=verbose)
     else:
         data = fetcher.get_post_content(url)
 
     if output:
-        fetcher.save_post(url, output, include_comments=include_comments)
+        fetcher.save_post(url, output, include_comments=include_comments, verbose=verbose)
         print(f"Saved to: {output}", file=sys.stderr)
     else:
         print(json.dumps(data, indent=2, ensure_ascii=False))
@@ -156,7 +157,7 @@ def fetch_newsletter(
                 post_url = f"{url.rstrip('/')}/p/{slug}"
                 log(f"[{i+1}/{len(posts)}] Fetching: {slug}")
                 if include_comments:
-                    post_data = fetcher.get_post_with_comments(post_url)
+                    post_data = fetcher.get_post_with_comments(post_url, verbose=verbose)
                 else:
                     post_data = fetcher.get_post_content(post_url)
                 all_posts_data.append(post_data)
@@ -308,6 +309,7 @@ def fetch_from_list(
                 post_url,
                 str(file_path),
                 include_comments=include_comments,
+                verbose=verbose,
             )
             print(f"[{i+1}/{len(posts)}] Saved: {file_path}", file=sys.stderr)
             fetched += 1
@@ -549,7 +551,7 @@ Examples:
 
     try:
         if args.url:
-            fetch_single_post(fetcher, args.url, args.output, include_comments)
+            fetch_single_post(fetcher, args.url, args.output, include_comments, verbose=args.verbose)
         elif args.post_id:
             fetch_post_by_id(fetcher, args.post_id, args.output, include_comments, verbose=args.verbose)
         elif args.saved:
