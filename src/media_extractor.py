@@ -381,6 +381,10 @@ def _download_image(session: requests.Session, post_id: int,
 
     if not dest.exists():
         resp = session.get(source_url, timeout=30)
+        if resp.status_code == 403:
+            # Old bucketeer S3 URLs are dead; try via Substack CDN
+            cdn_url = _make_cdn_url(source_url)
+            resp = session.get(cdn_url, timeout=30)
         resp.raise_for_status()
         dest.write_bytes(resp.content)
 
@@ -407,6 +411,13 @@ def _download_audio(session: requests.Session, post_id: int,
 
 
 # ── URL / format helpers ─────────────────────────────────────────────────────
+
+def _make_cdn_url(s3_url: str) -> str:
+    """Wrap an S3 URL in the Substack CDN fetch proxy."""
+    from urllib.parse import quote
+    encoded = quote(s3_url, safe="")
+    return f"https://substackcdn.com/image/fetch/f_auto,q_auto:good,fl_progressive:steep/{encoded}"
+
 
 def _extract_s3_url(cdn_url: str) -> str | None:
     """Extract the original S3 URL from a substackcdn.com fetch URL.
