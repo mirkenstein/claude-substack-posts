@@ -23,7 +23,7 @@ USE_EMBEDDED = os.environ.get("WEAVIATE_EMBEDDED", "").strip() in ("1", "true", 
 def get_client() -> weaviate.WeaviateClient:
     """Connect to Weaviate. Uses embedded if WEAVIATE_EMBEDDED=1, otherwise standalone."""
     if USE_EMBEDDED:
-        api_key = os.environ.get("JINAAI_API_KEY")
+        api_key = os.environ.get("JINAAI_API_KEY") or os.environ.get("JINAAI_APIKEY")
         headers = {"X-Jinaai-Api-Key": api_key} if api_key else {}
         client = weaviate.connect_to_local(
             host="127.0.0.1",
@@ -33,9 +33,12 @@ def get_client() -> weaviate.WeaviateClient:
         )
         return client
 
+    api_key = os.environ.get("JINAAI_API_KEY") or os.environ.get("JINAAI_APIKEY")
+    headers = {"X-Jinaai-Api-Key": api_key} if api_key else {}
     client = weaviate.connect_to_local(
         host="127.0.0.1",
         port=8080,
         grpc_port=50051,
+        headers=headers,
     )
     return client
