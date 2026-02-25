@@ -5,14 +5,17 @@ Creates VideoChunkEngRu collection with JinaAI v3 embeddings (1024 dim).
 Reads transcripts from youtube.video_transcripts joined with playlist info.
 
 Usage:
-    python upload_videos.py                    # create collection + upload all
+    python upload_videos.py                    # upload only new videos (since last run)
+    python upload_videos.py --all              # re-upload everything
     python upload_videos.py --upload-only      # skip collection creation
     python upload_videos.py --create-only      # only create collection
+    python upload_videos.py --since '2026-02-18'  # videos added after a date
 """
 
 import argparse
 import sys
 import time
+import uuid
 from pathlib import Path
 
 import tiktoken
@@ -110,7 +113,7 @@ def create_video_collection(client):
 # PostgreSQL query
 # ---------------------------------------------------------------------------
 
-VIDEOS_QUERY = """
+VIDEOS_QUERY_BASE = """
 SELECT
     vt.video_id,
     vt.title,
@@ -124,8 +127,38 @@ LEFT JOIN youtube.playlist_videos pv ON pv.video_id = vt.video_id
 LEFT JOIN youtube.playlists p ON p.playlist_id = pv.playlist_id
 WHERE vt.transcript IS NOT NULL
   AND vt.transcript != ''
-ORDER BY vt.upload_date
 """
+
+# Watermark file to track last upload time
+WATERMARK_FILE = Path(__file__).parent / ".last_upload_videos"
+
+
+def get_last_upload_time() -> str | None:
+    if WATERMARK_FILE.exists():
+        return WATERMARK_FILE.read_text().strip()
+    return None
+
+
+def save_upload_time(timestamp: str):
+    WATERMARK_FILE.write_text(timestamp)
+
+
+def build_query(args) -> tuple[str, list]:
+    """Build SQL query and params based on CLI args."""
+    query = VIDEOS_QUERY_BASE
+    params = []
+
+    if args.since:
+        query += "  AND vt.created_at >= %s\n"
+        params.append(args.since)
+    elif not args.all:
+        last = get_last_upload_time()
+        if last:
+            query += "  AND vt.created_at > %s\n"
+            params.append(last)
+
+    query += "ORDER BY vt.upload_date"
+    return query, params
 
 
 def build_chunks(row: dict) -> list[dict]:
@@ -172,7 +205,7 @@ def build_chunks(row: dict) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 def upload_chunks(client, all_chunks: list[dict]):
-    """Upload chunks to Weaviate using batch import."""
+    """Upload chunks to Weaviate using batch import with deterministic UUIDs."""
     collection = client.collections.get(VIDEO_COLLECTION)
 
     print(f"Uploading {len(all_chunks)} chunks to {VIDEO_COLLECTION}...")
@@ -182,9 +215,16 @@ def upload_chunks(client, all_chunks: list[dict]):
 
     with collection.batch.dynamic() as batch:
         for i, chunk in enumerate(all_chunks):
+            obj_uuid = uuid.uuid5(
+                uuid.NAMESPACE_DNS,
+                f"engru-video-{chunk['videoId']}-{chunk['chunkNumber']}"
+            )
             transcript = chunk.pop("transcript")
             try:
-                batch.add_object(properties={"transcript": transcript, **chunk})
+                batch.add_object(
+                    properties={"transcript": transcript, **chunk},
+                    uuid=obj_uuid,
+                )
                 uploaded += 1
             except Exception as e:
                 errors += 1
@@ -209,10 +249,14 @@ def upload_chunks(client, all_chunks: list[dict]):
 
 def main():
     parser = argparse.ArgumentParser(description="Upload video transcripts to Weaviate")
+    parser.add_argument("--all", action="store_true",
+                        help="Re-upload all videos (ignore watermark)")
     parser.add_argument("--upload-only", action="store_true",
                         help="Skip collection creation, only upload")
     parser.add_argument("--create-only", action="store_true",
                         help="Only create collection, don't upload")
+    parser.add_argument("--since", metavar="TIMESTAMP",
+                        help="Upload videos added after this timestamp (e.g. '2026-02-18')")
     args = parser.parse_args()
 
     client = get_client()
@@ -225,14 +269,23 @@ def main():
         if args.create_only:
             return
 
+        from datetime import datetime, timezone
+        upload_start = datetime.now(timezone.utc).isoformat()
+
         # Read from PostgreSQL
+        query, params = build_query(args)
         print("\nReading transcripts from PostgreSQL...")
         with DatabaseConnection() as conn:
             with conn.cursor() as cur:
-                cur.execute(VIDEOS_QUERY)
+                cur.execute("SET search_path TO youtube, public")
+                cur.execute(query, params)
                 columns = [desc[0] for desc in cur.description]
                 rows = [dict(zip(columns, r)) for r in cur.fetchall()]
-        print(f"  {len(rows)} videos with transcripts")
+        print(f"  {len(rows)} videos to upload")
+
+        if not rows:
+            print("Nothing new to upload.")
+            return
 
         # Chunk
         print("Chunking transcripts...")
@@ -244,6 +297,10 @@ def main():
 
         # Upload
         upload_chunks(client, all_chunks)
+
+        # Save watermark on success
+        save_upload_time(upload_start)
+        print(f"Watermark saved: {upload_start}")
 
     finally:
         client.close()
