@@ -47,6 +47,7 @@ PUB_ALIASES = {
     "kk": "kamilkazani",
     "drl": "drlivci",
     "woaw": "woaw",
+    "mm": "martyrmade",
 }
 
 # Categories that warrant pass-2 deep analysis

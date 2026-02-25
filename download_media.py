@@ -37,6 +37,7 @@ PUB_ALIASES = {
     "kk": "kamilkazani",
     "drl": "drlivci",
     "woaw": "woaw",
+    "mm": "martyrmade",
 }
 
 
