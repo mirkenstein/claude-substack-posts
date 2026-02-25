@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Read YouTube video transcripts from PostgreSQL, chunk, and upload to Weaviate.
 
-Creates VideoChunkEngRu collection with JinaAI v3 embeddings (1024 dim).
+Creates VideoChunk* collections with JinaAI v3 embeddings (1024 dim).
 Reads transcripts from youtube.video_transcripts joined with playlist info.
 
 Usage:
@@ -10,6 +10,7 @@ Usage:
     python upload_videos.py --upload-only      # skip collection creation
     python upload_videos.py --create-only      # only create collection
     python upload_videos.py --since '2026-02-18'  # videos added after a date
+    python upload_videos.py --database podcasts   # target podcasts DB → VideoChunkPodcasts
 """
 
 import argparse
@@ -24,7 +25,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.db.connection import DatabaseConnection
 
 sys.path.insert(0, str(Path(__file__).parent))
-from config import get_client, VIDEO_COLLECTION
+from config import get_client, VIDEO_COLLECTION, VIDEO_PODCASTS_COLLECTION
 
 from weaviate.classes.config import Configure, Property, DataType
 
@@ -62,20 +63,20 @@ def chunk_by_tokens(text: str) -> list[str]:
 # Collection creation
 # ---------------------------------------------------------------------------
 
-def create_video_collection(client):
-    """Create VideoChunkEngRu collection with JinaAI v3 vectorizer."""
-    if client.collections.exists(VIDEO_COLLECTION):
-        resp = input(f"{VIDEO_COLLECTION} exists. Delete and recreate? (yes/no): ")
+def create_video_collection(client, collection_name):
+    """Create video chunk collection with JinaAI v3 vectorizer."""
+    if client.collections.exists(collection_name):
+        resp = input(f"{collection_name} exists. Delete and recreate? (yes/no): ")
         if resp.lower() == "yes":
-            client.collections.delete(VIDEO_COLLECTION)
-            print(f"  Deleted {VIDEO_COLLECTION}")
+            client.collections.delete(collection_name)
+            print(f"  Deleted {collection_name}")
         else:
             print(f"  Skipping creation")
             return
 
     client.collections.create(
-        name=VIDEO_COLLECTION,
-        description="YouTube video transcript chunks (Strateg Divannogo Legiona) with JinaAI v3 embeddings",
+        name=collection_name,
+        description=f"YouTube video transcript chunks ({collection_name}) with JinaAI v3 embeddings",
         vector_config=Configure.Vectors.text2vec_jinaai(
             model="jina-embeddings-v3",
             dimensions=1024,
@@ -88,6 +89,9 @@ def create_video_collection(client):
         properties=[
             Property(name="transcript", data_type=DataType.TEXT,
                      description="Chunk content (vectorized)"),
+            Property(name="description", data_type=DataType.TEXT,
+                     index_searchable=True,
+                     skip_vectorization=True),
             Property(name="videoId", data_type=DataType.TEXT,
                      index_searchable=True),
             Property(name="videoTitle", data_type=DataType.TEXT,
@@ -106,7 +110,7 @@ def create_video_collection(client):
             Property(name="chunkTokens", data_type=DataType.INT),
         ],
     )
-    print(f"  Created {VIDEO_COLLECTION}")
+    print(f"  Created {collection_name}")
 
 
 # ---------------------------------------------------------------------------
@@ -117,6 +121,7 @@ VIDEOS_QUERY_BASE = """
 SELECT
     vt.video_id,
     vt.title,
+    vt.description,
     vt.channel_name,
     vt.url,
     vt.upload_date,
@@ -129,21 +134,24 @@ WHERE vt.transcript IS NOT NULL
   AND vt.transcript != ''
 """
 
-# Watermark file to track last upload time
-WATERMARK_FILE = Path(__file__).parent / ".last_upload_videos"
+
+def watermark_file(database: str) -> Path:
+    suffix = f"_{database}" if database != "substack" else ""
+    return Path(__file__).parent / f".last_upload_videos{suffix}"
 
 
-def get_last_upload_time() -> str | None:
-    if WATERMARK_FILE.exists():
-        return WATERMARK_FILE.read_text().strip()
+def get_last_upload_time(database: str) -> str | None:
+    wf = watermark_file(database)
+    if wf.exists():
+        return wf.read_text().strip()
     return None
 
 
-def save_upload_time(timestamp: str):
-    WATERMARK_FILE.write_text(timestamp)
+def save_upload_time(timestamp: str, database: str):
+    watermark_file(database).write_text(timestamp)
 
 
-def build_query(args) -> tuple[str, list]:
+def build_query(args, database: str) -> tuple[str, list]:
     """Build SQL query and params based on CLI args."""
     query = VIDEOS_QUERY_BASE
     params = []
@@ -152,7 +160,7 @@ def build_query(args) -> tuple[str, list]:
         query += "  AND vt.created_at >= %s\n"
         params.append(args.since)
     elif not args.all:
-        last = get_last_upload_time()
+        last = get_last_upload_time(database)
         if last:
             query += "  AND vt.created_at > %s\n"
             params.append(last)
@@ -170,6 +178,7 @@ def build_chunks(row: dict) -> list[dict]:
     shared = {
         "videoId": row["video_id"],
         "videoTitle": row["title"] or "",
+        "description": row.get("description") or "",
         "channelName": row["channel_name"] or "",
         "videoUrl": row["url"] or "",
         "uploadDate": row["upload_date"].isoformat() + "T00:00:00Z" if row["upload_date"] else "",
@@ -204,11 +213,11 @@ def build_chunks(row: dict) -> list[dict]:
 # Upload
 # ---------------------------------------------------------------------------
 
-def upload_chunks(client, all_chunks: list[dict]):
+def upload_chunks(client, all_chunks: list[dict], collection_name: str):
     """Upload chunks to Weaviate using batch import with deterministic UUIDs."""
-    collection = client.collections.get(VIDEO_COLLECTION)
+    collection = client.collections.get(collection_name)
 
-    print(f"Uploading {len(all_chunks)} chunks to {VIDEO_COLLECTION}...")
+    print(f"Uploading {len(all_chunks)} chunks to {collection_name}...")
     start = time.time()
     uploaded = 0
     errors = 0
@@ -257,14 +266,27 @@ def main():
                         help="Only create collection, don't upload")
     parser.add_argument("--since", metavar="TIMESTAMP",
                         help="Upload videos added after this timestamp (e.g. '2026-02-18')")
+    parser.add_argument("--database", default="substack",
+                        help="PostgreSQL database to read from (default: substack)")
     args = parser.parse_args()
+
+    # Select collection based on database
+    database = args.database
+    if database == "substack":
+        collection_name = VIDEO_COLLECTION
+    elif database == "podcasts":
+        collection_name = VIDEO_PODCASTS_COLLECTION
+    else:
+        collection_name = f"VideoChunk_{database}"
+
+    print(f"Database: {database} → Collection: {collection_name}")
 
     client = get_client()
     try:
         print(f"Connected to Weaviate (ready: {client.is_ready()})")
 
         if not args.upload_only:
-            create_video_collection(client)
+            create_video_collection(client, collection_name)
 
         if args.create_only:
             return
@@ -273,11 +295,10 @@ def main():
         upload_start = datetime.now(timezone.utc).isoformat()
 
         # Read from PostgreSQL
-        query, params = build_query(args)
-        print("\nReading transcripts from PostgreSQL...")
-        with DatabaseConnection() as conn:
+        query, params = build_query(args, database)
+        print(f"\nReading transcripts from PostgreSQL ({database})...")
+        with DatabaseConnection(database=database, schema="youtube") as conn:
             with conn.cursor() as cur:
-                cur.execute("SET search_path TO youtube, public")
                 cur.execute(query, params)
                 columns = [desc[0] for desc in cur.description]
                 rows = [dict(zip(columns, r)) for r in cur.fetchall()]
@@ -296,10 +317,10 @@ def main():
         print(f"  {len(all_chunks)} total chunks from {len(rows)} videos")
 
         # Upload
-        upload_chunks(client, all_chunks)
+        upload_chunks(client, all_chunks, collection_name)
 
         # Save watermark on success
-        save_upload_time(upload_start)
+        save_upload_time(upload_start, database)
         print(f"Watermark saved: {upload_start}")
 
     finally:
