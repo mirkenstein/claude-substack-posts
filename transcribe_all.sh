@@ -8,6 +8,7 @@
 #   ./transcribe_all.sh --subdomain slavlandchronicles   # one publication only
 #   ./transcribe_all.sh --dry-run                         # just list what would be transcribed
 #   ./transcribe_all.sh --num-speakers 2                  # force override for all episodes
+#   ./transcribe_all.sh --database podcasts               # target podcasts DB (martyrmade)
 
 set -euo pipefail
 
@@ -17,6 +18,7 @@ MODEL="large-v3"
 FORCE_SPEAKERS=""
 DRY_RUN=false
 SUBDOMAIN_FILTER=""
+DATABASE="substack"
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -24,6 +26,7 @@ while [[ $# -gt 0 ]]; do
         --num-speakers) FORCE_SPEAKERS="$2"; shift 2 ;;
         --model) MODEL="$2"; shift 2 ;;
         --subdomain) SUBDOMAIN_FILTER="$2"; shift 2 ;;
+        --database) DATABASE="$2"; shift 2 ;;
         --dry-run) DRY_RUN=true; shift ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
@@ -39,12 +42,13 @@ fi
 SPEAKER_MAP_FILE=$(mktemp)
 trap 'rm -f "$SPEAKER_MAP_FILE"' EXIT
 
-python3 -c "
+python3 /dev/stdin "$DATABASE" << 'PYEOF' > "$SPEAKER_MAP_FILE"
 import re, sys
 sys.path.insert(0, '.')
 from src.db.connection import DatabaseConnection
 
-db = DatabaseConnection()
+database = sys.argv[1] if len(sys.argv) > 1 else 'substack'
+db = DatabaseConnection(database=database)
 conn = db.connect()
 cur = conn.cursor()
 cur.execute('''
@@ -87,6 +91,17 @@ for pid, subdomain, title, desc in cur.fetchall():
             speakers = 2
         else:
             speakers = 1
+    elif subdomain == 'martyrmade':
+        # w/ + multiple guests (comma or 'and')
+        if re.search(r'w/.*,.*and\s+', title) or re.search(r'w/.*,', title):
+            speakers = 3
+        # w/ + guest name (but NOT 'w/audio' which means 'with audio version')
+        elif re.search(r'w/(?!audio)(?!Audio)\s*\S', title):
+            speakers = 2
+        elif re.search(r'interview with|conversation with|discussion w', t):
+            speakers = 2
+        else:
+            speakers = 1
     else:
         speakers = 1
 
@@ -95,7 +110,7 @@ for pid, subdomain, title, desc in cur.fetchall():
 
 cur.close()
 db.close()
-" > "$SPEAKER_MAP_FILE"
+PYEOF
 
 echo "Loaded speaker counts for $(wc -l < "$SPEAKER_MAP_FILE") episodes from DB"
 
