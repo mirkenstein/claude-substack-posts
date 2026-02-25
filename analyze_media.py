@@ -158,6 +158,8 @@ def main():
     parser.add_argument("--reanalyze", action="store_true",
                         help="Re-analyze already-analyzed images")
     parser.add_argument("--api-key", help="Anthropic API key (or set ANTHROPIC_API_KEY)")
+    parser.add_argument("--database", default="substack",
+                        help="PostgreSQL database (default: substack)")
     args = parser.parse_args()
 
     if args.api_key:
@@ -175,7 +177,7 @@ def main():
         print(f"Supported: {', '.join(SUPPORTED_MODELS)}, ollama/<model>")
         sys.exit(1)
 
-    db = DatabaseConnection()
+    db = DatabaseConnection(database=args.database)
     try:
         conn = db.connect()
         images = get_pending_images(conn, args)

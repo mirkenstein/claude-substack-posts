@@ -21,6 +21,8 @@ VIDEO_COLLECTION = "VideoChunkEngRu"
 EXTERNAL_ARTICLES_COLLECTION = "ExternalArticleEngRu"
 EXTERNAL_COMMENTS_COLLECTION = "ExternalCommentEngRu"
 VIDEO_PODCASTS_COLLECTION = "VideoChunkPodcasts"
+POSTS_PODCASTS_COLLECTION = "SubstackPostPodcasts"
+COMMENTS_PODCASTS_COLLECTION = "SubstackCommentPodcasts"
 
 # Chunking settings (same as ForestParkPharmacy reference)
 CHUNK_SIZE = 700       # Target chunk size in tokens

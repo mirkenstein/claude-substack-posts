@@ -21,7 +21,7 @@ import tiktoken
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.db.connection import DatabaseConnection
 from config import (
-    get_client, POSTS_COLLECTION,
+    get_client, POSTS_COLLECTION, POSTS_PODCASTS_COLLECTION,
     CHUNK_SIZE, OVERLAP, MIN_CHUNK_SIZE, CHUNK_WORD_THRESHOLD,
 )
 
@@ -116,23 +116,25 @@ LEFT JOIN authors a   ON a.id = p.primary_author_id
 LEFT JOIN publications pub ON pub.id = p.publication_id
 """
 
-# Watermark file to track last upload time
-WATERMARK_FILE = Path(__file__).parent / ".last_upload"
+def _watermark_file(database: str) -> Path:
+    suffix = f"_{database}" if database != "substack" else ""
+    return Path(__file__).parent / f".last_upload{suffix}"
 
 
-def get_last_upload_time() -> str | None:
+def get_last_upload_time(database: str = "substack") -> str | None:
     """Read the watermark timestamp from the last successful upload."""
-    if WATERMARK_FILE.exists():
-        return WATERMARK_FILE.read_text().strip()
+    wf = _watermark_file(database)
+    if wf.exists():
+        return wf.read_text().strip()
     return None
 
 
-def save_upload_time(timestamp: str):
+def save_upload_time(timestamp: str, database: str = "substack"):
     """Save the current upload timestamp as watermark."""
-    WATERMARK_FILE.write_text(timestamp)
+    _watermark_file(database).write_text(timestamp)
 
 
-def build_query(args) -> tuple[str, list]:
+def build_query(args, database: str = "substack") -> tuple[str, list]:
     """Build SQL query and params based on CLI args."""
     conditions = []
     params = []
@@ -142,7 +144,7 @@ def build_query(args) -> tuple[str, list]:
         params.append(args.since)
     elif not args.all and not args.publication:
         # Default: incremental from last upload watermark
-        last = get_last_upload_time()
+        last = get_last_upload_time(database)
         if last:
             conditions.append("p.loaded_at > %s")
             params.append(last)
@@ -229,16 +231,29 @@ def main():
                         help="Only upload posts from this publication subdomain")
     parser.add_argument("--since", metavar="TIMESTAMP",
                         help="Upload posts loaded after this timestamp (e.g. '2026-02-18')")
+    parser.add_argument("--database", default="substack",
+                        help="PostgreSQL database to read from (default: substack)")
     args = parser.parse_args()
 
-    query, params = build_query(args)
+    # Select collection based on database
+    database = args.database
+    if database == "substack":
+        collection_name = POSTS_COLLECTION
+    elif database == "podcasts":
+        collection_name = POSTS_PODCASTS_COLLECTION
+    else:
+        collection_name = f"SubstackPost_{database}"
+
+    print(f"Database: {database} → Collection: {collection_name}")
+
+    query, params = build_query(args, database)
 
     # Read posts from Postgres
     from datetime import datetime, timezone
     upload_start = datetime.now(timezone.utc).isoformat()
 
-    print("Reading posts from PostgreSQL...")
-    with DatabaseConnection() as conn:
+    print(f"Reading posts from PostgreSQL ({database})...")
+    with DatabaseConnection(database=database) as conn:
         with conn.cursor() as cur:
             cur.execute(query, params)
             columns = [desc[0] for desc in cur.description]
@@ -263,9 +278,9 @@ def main():
     # Upload to Weaviate
     client = get_client()
     try:
-        collection = client.collections.get(POSTS_COLLECTION)
+        collection = client.collections.get(collection_name)
 
-        print(f"Uploading to {POSTS_COLLECTION}...")
+        print(f"Uploading to {collection_name}...")
         start = time.time()
         uploaded = 0
         failed = 0
@@ -293,7 +308,7 @@ def main():
 
         # Save watermark on success
         if failed == 0:
-            save_upload_time(upload_start)
+            save_upload_time(upload_start, database)
             print(f"Watermark saved: {upload_start}")
 
         # Verify

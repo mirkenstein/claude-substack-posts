@@ -96,6 +96,8 @@ def main():
     parser.add_argument('--resume', action='store_true', help='Skip already-loaded files')
     parser.add_argument('--log', help='Path to ETL log file')
     parser.add_argument('--verbose', '-v', action='store_true')
+    parser.add_argument('--database', default='substack',
+                        help='PostgreSQL database to load into (default: substack)')
     args = parser.parse_args()
 
     log = setup_logging(args.log)
@@ -117,7 +119,7 @@ def main():
     counts = {'success': 0, 'skipped': 0, 'error': 0}
     start = time.time()
 
-    with DatabaseConnection() as conn:
+    with DatabaseConnection(database=args.database) as conn:
         loader = PostLoader(conn)
 
         for i, fp in enumerate(files, 1):

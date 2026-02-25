@@ -132,6 +132,8 @@ def main():
                         help="Only download for this publication (subdomain or alias)")
     parser.add_argument("--cookies", default="cookies.json",
                         help="Path to cookies JSON file (default: cookies.json)")
+    parser.add_argument("--database", default="substack",
+                        help="PostgreSQL database (default: substack)")
 
     args = parser.parse_args()
 
@@ -139,7 +141,7 @@ def main():
         parser.print_help()
         sys.exit(1)
 
-    db = DatabaseConnection()
+    db = DatabaseConnection(database=args.database)
     try:
         conn = db.connect()
 
