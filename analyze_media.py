@@ -13,6 +13,7 @@ Usage:
     python analyze_media.py --pass2 --api-key sk-...           # pass 2: Haiku on critical images
     python analyze_media.py --publication kk                   # one publication
     python analyze_media.py --limit 50                         # test run
+    python analyze_media.py --retry-errors                      # retry previously failed images
     python analyze_media.py --reanalyze                        # redo already-analyzed
     python analyze_media.py --type cover_image                 # cover images only
 """
@@ -57,7 +58,10 @@ def get_pending_images(conn, args) -> list[dict]:
     where = ["pm.downloaded_at IS NOT NULL", "pm.local_path IS NOT NULL"]
     params: list = []
 
-    if args.pass2:
+    if args.retry_errors:
+        # Retry: only images with errors
+        where.append("pm.analysis_error IS NOT NULL")
+    elif args.pass2:
         # Pass 2: only images already analyzed by pass 1 with critical categories
         where.append("pm.analyzed_at IS NOT NULL")
         where.append("pm.image_category IN %s")
@@ -149,6 +153,8 @@ def main():
     parser.add_argument("--type", choices=["image", "cover_image"],
                         help="Only analyze this media type")
     parser.add_argument("--limit", type=int, help="Max images to analyze")
+    parser.add_argument("--retry-errors", action="store_true",
+                        help="Retry images that failed with errors")
     parser.add_argument("--reanalyze", action="store_true",
                         help="Re-analyze already-analyzed images")
     parser.add_argument("--api-key", help="Anthropic API key (or set ANTHROPIC_API_KEY)")
@@ -178,7 +184,12 @@ def main():
             print("No images to analyze.")
             return
 
-        pass_label = "Pass 2 (deep)" if args.pass2 else "Pass 1 (triage)"
+        if args.retry_errors:
+            pass_label = "Retry errors"
+        elif args.pass2:
+            pass_label = "Pass 2 (deep)"
+        else:
+            pass_label = "Pass 1 (triage)"
         print(f"{pass_label}: analyzing {len(images)} images with {model_name}...")
         start = time.time()
         analyzed = 0
