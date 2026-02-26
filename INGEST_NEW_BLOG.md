@@ -165,6 +165,7 @@ After refresh, download any new media from the new posts:
 ```bash
 python download_media.py --extract --download --type image --publication ${BLOG}
 python download_media.py --download --type cover_image --publication ${BLOG}
+python download_media.py --download --type audio --publication ${BLOG}
 ```
 
 ---
@@ -184,6 +185,7 @@ python load_posts.py --dir posts/${BLOG}/ --resume --last 5 -v
 # 3. Extract and download any new media from refreshed posts
 python download_media.py --extract --download --type image --publication ${BLOG}
 python download_media.py --download --type cover_image --publication ${BLOG}
+python download_media.py --download --type audio --publication ${BLOG}
 
 # 4. Incremental Weaviate upload (watermark picks up the refreshed posts)
 python weaviate/upload_posts.py
