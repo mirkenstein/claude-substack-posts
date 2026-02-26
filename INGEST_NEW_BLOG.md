@@ -160,11 +160,18 @@ python refresh_blog.py ${BLOG} --cookies cookies.json
 
 The script archives the old post list as `{blog}_posts.{timestamp}.json` before updating.
 
+After refresh, download any new media from the new posts:
+
+```bash
+python download_media.py --extract --download --type image --publication ${BLOG}
+python download_media.py --download --type cover_image --publication ${BLOG}
+```
+
 ---
 
 ## Refresh Comments on Recent Posts
 
-Re-fetch the last N posts to pick up new comments, then reload into Postgres and Weaviate:
+Re-fetch the last N posts to pick up new comments and media, then reload into Postgres and Weaviate:
 
 ```bash
 # 1. Re-fetch last 5 posts (overwrites JSON files with fresh comments)
@@ -174,7 +181,11 @@ python main.py --from-list posts/${BLOG}/${BLOG}_posts.json \
 # 2. Reload those 5 into Postgres (--last picks by mtime, bypasses --resume)
 python load_posts.py --dir posts/${BLOG}/ --resume --last 5 -v
 
-# 3. Incremental Weaviate upload (watermark picks up the refreshed posts)
+# 3. Extract and download any new media from refreshed posts
+python download_media.py --extract --download --type image --publication ${BLOG}
+python download_media.py --download --type cover_image --publication ${BLOG}
+
+# 4. Incremental Weaviate upload (watermark picks up the refreshed posts)
 python weaviate/upload_posts.py
 ```
 
@@ -182,5 +193,6 @@ Notes:
 - Always use `--cookies cookies.json` when fetching — paid posts will be truncated without it
 - `--last N` in `main.py` takes the first N posts from the list (most recent first)
 - `--last N` in `load_posts.py` selects files by modification time and forces reload even with `--resume`
-- Step 3 uses the watermark (no `--publication` flag) so only the refreshed posts get re-uploaded
+- Step 3 re-extracts media URLs from post HTML and downloads any that are new (already-downloaded files are skipped)
+- Step 4 uses the watermark (no `--publication` flag) so only the refreshed posts get re-uploaded
 - Do **not** use `--resume` in step 1 — you want to overwrite the existing files with fresh data
