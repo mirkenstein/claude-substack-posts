@@ -243,6 +243,7 @@ def fetch_from_list(
     since: str | None = None,
     until: str | None = None,
     audience: str | None = None,
+    last: int | None = None,
     verbose: bool = False,
 ) -> None:
     """Fetch posts from a saved list JSON file."""
@@ -277,6 +278,11 @@ def fetch_from_list(
     if audience:
         posts = [p for p in posts if p.get("audience") == audience]
         print(f"After audience filter ({audience}): {len(posts)} posts", file=sys.stderr)
+
+    # Take only the last N posts (most recent first)
+    if last:
+        posts = posts[:last]
+        print(f"Taking last {last} posts", file=sys.stderr)
 
     # Create output directory
     output_path = Path(output_dir)
@@ -415,6 +421,9 @@ Examples:
   # Fetch only posts from 2024 from a saved list
   python main.py --from-list ./posts/newsletter_posts.json --output-dir ./posts --since 2024-01-01 --until 2024-12-31
 
+  # Re-fetch last 5 posts to update comments (overwrites existing files)
+  python main.py --from-list ./posts/newsletter_posts.json --output-dir ./posts --last 5 --delay 30 --jitter 4
+
   # Fetch without comments
   python main.py --url https://newsletter.substack.com/p/post-slug --no-comments
 
@@ -526,6 +535,12 @@ Examples:
         choices=["everyone", "only_paid"],
         help="Only include posts with this audience (everyone or only_paid)",
     )
+    parser.add_argument(
+        "--last",
+        type=int,
+        metavar="N",
+        help="Only process the last N posts from the list (most recent first)",
+    )
 
     args = parser.parse_args()
 
@@ -576,6 +591,7 @@ Examples:
                 since=args.since,
                 until=args.until,
                 audience=args.audience,
+                last=args.last,
                 verbose=args.verbose,
             )
         elif args.list:

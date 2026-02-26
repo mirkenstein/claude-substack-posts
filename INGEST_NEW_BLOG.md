@@ -159,3 +159,27 @@ python refresh_blog.py ${BLOG} --cookies cookies.json
 ```
 
 The script archives the old post list as `{blog}_posts.{timestamp}.json` before updating.
+
+---
+
+## Refresh Comments on Recent Posts
+
+Re-fetch the last N posts to pick up new comments, then reload into Postgres and Weaviate:
+
+```bash
+# 1. Re-fetch last 5 posts (overwrites JSON files with fresh comments)
+python main.py --from-list posts/${BLOG}/${BLOG}_posts.json \
+    --output-dir posts/${BLOG}/ --last 5 --delay 30 --jitter 4 -v
+
+# 2. Reload those 5 into Postgres (--last picks by mtime, bypasses --resume)
+python load_posts.py --dir posts/${BLOG}/ --resume --last 5 -v
+
+# 3. Incremental Weaviate upload (watermark picks up the refreshed posts)
+python weaviate/upload_posts.py
+```
+
+Notes:
+- `--last N` in `main.py` takes the first N posts from the list (most recent first)
+- `--last N` in `load_posts.py` selects files by modification time and forces reload even with `--resume`
+- Step 3 uses the watermark (no `--publication` flag) so only the refreshed posts get re-uploaded
+- Do **not** use `--resume` in step 1 — you want to overwrite the existing files with fresh data

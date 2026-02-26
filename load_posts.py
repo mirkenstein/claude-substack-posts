@@ -7,6 +7,7 @@ Usage:
     python load_posts.py --dir posts/slc/ --log etl.log
     python load_posts.py --file posts/esq/some-post.json
     python load_posts.py --dir posts/esq/ --resume
+    python load_posts.py --dir posts/esq/ --last 5              # reload 5 most recently modified files
 """
 
 import argparse
@@ -94,6 +95,8 @@ def main():
     group.add_argument('--dir', help='Directory containing JSON files')
     group.add_argument('--file', help='Single JSON file to load')
     parser.add_argument('--resume', action='store_true', help='Skip already-loaded files')
+    parser.add_argument('--last', type=int, metavar='N',
+                        help='Only load the N most recently modified files (ignores --resume for those files)')
     parser.add_argument('--log', help='Path to ETL log file')
     parser.add_argument('--verbose', '-v', action='store_true')
     parser.add_argument('--database', default='substack',
@@ -111,6 +114,15 @@ def main():
         log.error("No JSON files found")
         sys.exit(1)
 
+    # --last N: pick the N most recently modified files, force reload (no resume)
+    force_files = set()
+    if args.last:
+        by_mtime = sorted(files, key=lambda f: f.stat().st_mtime, reverse=True)
+        last_files = by_mtime[:args.last]
+        files = last_files
+        force_files = {f for f in files}
+        log.info("Selected %d most recently modified files (forced reload)", len(files))
+
     source_dir = args.dir or str(Path(args.file).parent)
     log.info("=" * 70)
     log.info("ETL START  source=%s  files=%d  resume=%s", source_dir, len(files), args.resume)
@@ -123,7 +135,8 @@ def main():
         loader = PostLoader(conn)
 
         for i, fp in enumerate(files, 1):
-            result = load_one_file(loader, conn, fp, args.resume, log)
+            use_resume = args.resume and fp not in force_files
+            result = load_one_file(loader, conn, fp, use_resume, log)
             counts[result] += 1
 
             if result == 'skipped' and not args.verbose:

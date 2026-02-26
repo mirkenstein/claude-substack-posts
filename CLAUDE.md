@@ -26,8 +26,8 @@ src/db/                             # Database connection and loader
 
 | Script | Purpose |
 |--------|---------|
-| `main.py` | Fetch post lists (`--list --all`) and full post content (`--from-list`) from Substack API |
-| `load_posts.py` | Load post JSONs into PostgreSQL. Supports `--resume`, `--log`, structured error recording in `load_status` table |
+| `main.py` | Fetch post lists (`--list --all`) and full post content (`--from-list`). `--last N` re-fetches most recent N posts |
+| `load_posts.py` | Load post JSONs into PostgreSQL. `--resume`, `--log`, `--last N` (reload N most recently modified files, bypasses resume) |
 | `weaviate/upload_posts.py` | Upload posts to Weaviate. Watermark-based incremental uploads (`--publication`) |
 | `refresh_blog.py` | End-to-end incremental refresh: diff, fetch, load, upload. Convenience wrapper |
 | `download_media.py` | Extract and download images/audio from posts |
