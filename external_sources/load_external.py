@@ -18,7 +18,8 @@ from pathlib import Path
 import psycopg2
 import psycopg2.errors
 
-DB_URL = "postgresql://postgres:postgres@localhost:5432/substack"
+DB_URL = ("postgresql://postgres:postgres@localhost:5432/substack"
+          "")
 SCRAPED_DIR = Path(__file__).parent / "scraped_data"
 SQL_FILE = Path(__file__).parent / "create_external_tables.sql"
 
@@ -28,10 +29,13 @@ SQL_FILE = Path(__file__).parent / "create_external_tables.sql"
 
 FILENAME_DOMAIN_MAP = {
     'topwar':       'topwar.ru',
+    'top_war':      'topwar.ru',
     'topcor':       'topcor.ru',
     'katysha':      'katyusha.org',
     'livejournal':  'livejournal.com',
     'live_journal': 'livejournal.com',
+    'liberium':     'liberium.ru',
+    'versia_ru':    'versia.ru',
     'WSJ':          'wsj.com',
     'wsj':          'wsj.com',
     'washpost':     'washingtonpost.com',
@@ -295,10 +299,9 @@ def load_json_file(conn, filepath, recovery_source=None):
             article_id = cur.fetchone()[0]
             article_count += 1
 
-            # Load comments — delete existing first to avoid duplicates on re-run
+            # Load comments — upsert by (article_id, content_hash)
             comments_list = a.get('comments_list') or []
             if comments_list and isinstance(comments_list, list):
-                cur.execute("DELETE FROM external.comments WHERE article_id = %s", (article_id,))
                 for c in comments_list:
                     if not isinstance(c, dict):
                         continue
@@ -309,6 +312,12 @@ def load_json_file(conn, filepath, recovery_source=None):
                         INSERT INTO external.comments
                             (article_id, source_comment_id, username, comment_date, body, rating)
                         VALUES (%s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (article_id, content_hash) DO UPDATE SET
+                            source_comment_id = COALESCE(EXCLUDED.source_comment_id, external.comments.source_comment_id),
+                            username = COALESCE(EXCLUDED.username, external.comments.username),
+                            comment_date = COALESCE(EXCLUDED.comment_date, external.comments.comment_date),
+                            rating = COALESCE(EXCLUDED.rating, external.comments.rating),
+                            updated_at = now()
                     """, (
                         article_id,
                         c.get('id'),

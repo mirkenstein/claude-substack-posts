@@ -120,8 +120,14 @@ CREATE TABLE external.comments (
     -- Metrics
     rating              text,                    -- TopWar: '+21', '-3', etc. Nullable for sources without ratings.
 
+    -- Dedup
+    content_hash        text GENERATED ALWAYS AS (md5(COALESCE(username, '') || body)) STORED,
+
     -- Housekeeping
-    created_at          timestamptz DEFAULT now()
+    created_at          timestamptz DEFAULT now(),
+    updated_at          timestamptz DEFAULT now(),
+
+    UNIQUE (article_id, content_hash)
 );
 
 -- Full-text search on comment body

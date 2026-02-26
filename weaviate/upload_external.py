@@ -4,8 +4,13 @@
 Reads from external.articles and external.comments, chunks articles by tokens,
 bundles comments by article, and uploads to Weaviate with JinaAI v3 embeddings.
 
+Supports watermark-based incremental uploads: only records with updated_at after
+the last successful upload are processed. Use --all to force a full re-upload.
+
 Usage:
-    python upload_external.py                    # create collections + upload all
+    python upload_external.py                    # incremental (new/updated since last run)
+    python upload_external.py --all              # re-upload everything
+    python upload_external.py --since 2025-01-01 # upload records updated after date
     python upload_external.py --upload-only      # skip collection creation
     python upload_external.py --create-only      # only create collections
     python upload_external.py --articles-only    # only articles
@@ -18,6 +23,7 @@ import re
 import sys
 import time
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 import tiktoken
@@ -179,6 +185,25 @@ def create_comments_collection(client):
 
 
 # ---------------------------------------------------------------------------
+# Watermark (incremental upload tracking)
+# ---------------------------------------------------------------------------
+
+WATERMARK_FILE = Path(__file__).parent / ".last_upload_external"
+
+
+def get_last_upload_time() -> str | None:
+    """Read the watermark timestamp from the last successful upload."""
+    if WATERMARK_FILE.exists():
+        return WATERMARK_FILE.read_text().strip()
+    return None
+
+
+def save_upload_time(timestamp: str):
+    """Save the current upload timestamp as watermark."""
+    WATERMARK_FILE.write_text(timestamp)
+
+
+# ---------------------------------------------------------------------------
 # DB queries
 # ---------------------------------------------------------------------------
 
@@ -197,6 +222,7 @@ SELECT
     s.language
 FROM external.articles a
 JOIN external.sources s ON s.id = a.source_id
+{where}
 ORDER BY s.domain, a.id
 """
 
@@ -213,22 +239,35 @@ SELECT
 FROM external.comments c
 JOIN external.articles a ON a.id = c.article_id
 JOIN external.sources s ON s.id = a.source_id
+{where}
 ORDER BY s.domain, c.article_id, c.id
 """
 
 
-def fetch_articles(conn) -> list[dict]:
+def fetch_articles(conn, since: str | None = None) -> list[dict]:
+    where = ""
+    params = []
+    if since:
+        where = "WHERE a.updated_at > %s"
+        params = [since]
+    query = ARTICLES_QUERY.format(where=where)
     with conn.cursor() as cur:
         cur.execute("SET search_path TO external, public")
-        cur.execute(ARTICLES_QUERY)
+        cur.execute(query, params)
         columns = [desc[0] for desc in cur.description]
         return [dict(zip(columns, r)) for r in cur.fetchall()]
 
 
-def fetch_comments(conn) -> list[dict]:
+def fetch_comments(conn, since: str | None = None) -> list[dict]:
+    where = ""
+    params = []
+    if since:
+        where = "WHERE c.updated_at > %s"
+        params = [since]
+    query = COMMENTS_QUERY.format(where=where)
     with conn.cursor() as cur:
         cur.execute("SET search_path TO external, public")
-        cur.execute(COMMENTS_QUERY)
+        cur.execute(query, params)
         columns = [desc[0] for desc in cur.description]
         return [dict(zip(columns, r)) for r in cur.fetchall()]
 
@@ -517,14 +556,32 @@ def main():
                         help="Only process articles")
     parser.add_argument("--comments-only", action="store_true",
                         help="Only process comments")
+    parser.add_argument("--all", action="store_true",
+                        help="Re-upload all (ignore watermark)")
+    parser.add_argument("--since", metavar="TIMESTAMP",
+                        help="Upload records updated after this timestamp (ISO format)")
     args = parser.parse_args()
 
     do_articles = not args.comments_only
     do_comments = not args.articles_only
 
+    # Determine the cutoff for incremental upload
+    since = None
+    if args.since:
+        since = args.since
+    elif not args.all:
+        since = get_last_upload_time()
+
+    upload_start = datetime.now(timezone.utc).isoformat()
+
     client = get_client()
     try:
         print(f"Connected to Weaviate (ready: {client.is_ready()})")
+
+        if since:
+            print(f"Incremental upload: records updated after {since}")
+        else:
+            print("Full upload: all records")
 
         # Create collections
         if not args.upload_only:
@@ -543,24 +600,35 @@ def main():
                 cur.execute("SET search_path TO external, public")
 
             if do_articles:
-                articles = fetch_articles(conn)
+                articles = fetch_articles(conn, since=since)
                 print(f"  {len(articles)} articles")
             if do_comments:
-                comments = fetch_comments(conn)
+                comments = fetch_comments(conn, since=since)
                 print(f"  {len(comments)} comments")
 
         # Upload
+        failed = False
         if do_articles:
-            print(f"\n{'='*60}")
-            print("UPLOADING ARTICLES")
-            print(f"{'='*60}")
-            upload_article_chunks(client, articles)
+            if articles:
+                print(f"\n{'='*60}")
+                print("UPLOADING ARTICLES")
+                print(f"{'='*60}")
+                upload_article_chunks(client, articles)
+            else:
+                print("\nNo new articles to upload.")
 
         if do_comments:
-            print(f"\n{'='*60}")
-            print("UPLOADING COMMENTS")
-            print(f"{'='*60}")
-            upload_comment_bundles(client, comments)
+            if comments:
+                print(f"\n{'='*60}")
+                print("UPLOADING COMMENTS")
+                print(f"{'='*60}")
+                upload_comment_bundles(client, comments)
+            else:
+                print("\nNo new comments to upload.")
+
+        # Save watermark on success
+        save_upload_time(upload_start)
+        print(f"\nWatermark saved: {upload_start}")
 
     finally:
         client.close()

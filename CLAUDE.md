@@ -43,36 +43,75 @@ Both load posts into PostgreSQL using `PostLoader`, but `load_posts.py` is the c
 
 When in doubt, prefer `load_posts.py --resume` for postgres loading.
 
-### Transcription
+### Transcription (`transcribe/`)
 
 | Script | Purpose |
 |--------|---------|
 | `transcribe_all.sh` | Batch transcription with per-episode speaker count inference from DB heuristics |
-| `transcribe/transcribe_interview.py` | Single episode transcription using whisperx |
+| `transcribe/transcribe_interview.py` | Single episode transcription using WhisperX + pyannote diarization |
+| `transcribe/SETUP.md` | One-time setup: dependencies, pyannote license acceptance, HF token |
+| `transcribe/TRANSCRIPT_INGESTION_PLAN.md` | Design doc for transcript ingestion pipeline |
+| `ingest_transcripts.py` | Load transcripts into `transcript_lines` table, update `posts.content_html`, upload to Weaviate |
+
+```bash
+# Batch transcribe all untranscribed episodes for a publication
+./transcribe_all.sh --subdomain slavlandchronicles
+./transcribe_all.sh --subdomain martyrmade --database podcasts
+
+# Dry run (preview what would be transcribed with speaker counts)
+./transcribe_all.sh --subdomain slavlandchronicles --dry-run
+
+# Force speaker count override
+./transcribe_all.sh --subdomain slavlandchronicles --num-speakers 2
+
+# Single episode
+python transcribe/transcribe_interview.py posts/saved/audio/anti-empire/84809249/episode.mp3 \
+    --num-speakers 3 --model large-v3 --hf-token "$HUGGING_FACE_HUB_TOKEN"
+
+# Ingest transcripts into Postgres + Weaviate
+python ingest_transcripts.py posts/saved/audio/anti-empire/
+python ingest_transcripts.py posts/saved/audio/anti-empire/83709910  # single episode
+```
+
+Requires `HUGGING_FACE_HUB_TOKEN` environment variable. Default Whisper model: `large-v3`.
 
 Speaker count heuristics in `transcribe_all.sh`:
-- **anti-empire**: Always 3 speakers (interview format)
+- **anti-empire**: Always 3 speakers (WOAW interview format: Marco, Rolo, Slavsquat)
 - **edwardslavsquat**: Checks description for multiple names, "w/", "conversation with", "interview with" patterns
-- **slavlandchronicles**: Checks title for `w/` or `W/` pattern (case-insensitive)
+- **slavlandchronicles**: Checks title for `w/` or `W/` pattern, WOAW episodes get 3
+- **martyrmade**: Checks title for `w/` (excluding `w/audio`), comma/and patterns for multiple guests
 - Default: 1 speaker (solo podcast)
 
 ### External Sources
 
-`external_sources/load_external.py` loads scraped articles from non-Substack sites (TopWar, LiveJournal, Katyusha, WSJ, Washington Post, TopCor, The Nation) into the `external` schema.
+`external_sources/load_external.py` loads scraped articles from non-Substack sites into the `external` schema. Sources: TopWar, LiveJournal, Katyusha, WSJ, Washington Post, TopCor, The Nation, Liberium, Versia.
 
 ```bash
-python external_sources/load_external.py                          # load all JSON files from scraped_data/
-python external_sources/load_external.py --file topcor_articles.json  # load one file
-python external_sources/load_external.py --recreate               # drop & recreate schema, then load all
-python external_sources/load_external.py --recreate --no-load     # just recreate schema
+python external_sources/load_external.py                                        # load all JSON files from scraped_data/
+python external_sources/load_external.py --file topcor_articles.json            # load one file
+python external_sources/load_external.py --file new_cumulative/topwar_articles.json  # load from subdirectory
+python external_sources/load_external.py --recreate                             # drop & recreate schema, then load all
+python external_sources/load_external.py --recreate --no-load                   # just recreate schema
 ```
 
 - Schema defined in `external_sources/create_external_tables.sql`
-- Source domain is inferred from filename prefix via `FILENAME_DOMAIN_MAP` (e.g. `topwar_*` -> `topwar.ru`, `WSJ_*` -> `wsj.com`)
+- Source domain is inferred from filename prefix via `FILENAME_DOMAIN_MAP` (e.g. `topwar_*` / `top_war_*` -> `topwar.ru`, `WSJ_*` -> `wsj.com`)
 - New sources are auto-created if not in the seed list
-- Duplicate URLs across files (e.g. same topwar article in `topwar_articles.json` and `topwar_other_articles.json`) are merged silently
+- **Articles**: upsert on `(source_id, url)` using `COALESCE` — existing data is preserved, only NULLs are filled
+- **Comments**: upsert on `(article_id, content_hash)` where `content_hash = md5(username || body)` — stable IDs across re-runs
 - JSON files go in `external_sources/scraped_data/`
+- `external_sources/scraped_data/new_cumulative/` — latest cumulative scrape files (all sources, superset of original files)
 - `--recreate` runs `DROP SCHEMA external CASCADE` then re-runs the SQL file — use when schema changes
+
+**Weaviate upload** (`weaviate/upload_external.py`) supports watermark-based incremental uploads:
+
+```bash
+python weaviate/upload_external.py                    # incremental (new/updated since last run)
+python weaviate/upload_external.py --all              # re-upload everything
+python weaviate/upload_external.py --since 2025-01-01 # upload records updated after date
+python weaviate/upload_external.py --articles-only    # only articles
+python weaviate/upload_external.py --comments-only    # only comments
+```
 
 ### Media Download and Analysis
 
@@ -148,6 +187,10 @@ Key tables: `sources`, `articles`, `comments`
 - `articles.source_article_id` — original ID from source site (e.g. TopWar numeric ID)
 - `articles.file_path` — local scrape file path, used for dedup (`UNIQUE(source_id, file_path)`)
 - `articles.url` — canonical URL, also unique per source (`UNIQUE(source_id, url)`)
+- `articles.updated_at` — set on upsert, used as watermark for incremental Weaviate uploads
+- `comments.content_hash` — generated column `md5(username || body)`, used for upsert dedup (`UNIQUE(article_id, content_hash)`)
+- `comments.updated_at` — set on upsert, used as watermark for incremental Weaviate uploads
+- Sources: topwar.ru, livejournal.com, katyusha.org, wsj.com, thenation.com, topcor.ru, washingtonpost.com, liberium.ru, versia.ru
 - Views: `articles_with_source` (joins source info), `substack_citations` (cross-references with `substack.post_links`)
 
 ## Canonical Folder Naming
@@ -176,8 +219,10 @@ Collections:
 - `SubstackPostEngRu` — post chunks, OpenAI `text-embedding-3-small`, Cohere reranker
 - `SubstackCommentEngRu` — individual comments, OpenAI embeddings
 - `VideoChunkEngRu` — YouTube transcript chunks, JinaAI v3 `jina-embeddings-v3` (1024 dim), JinaAI reranker
+- `ExternalArticleEngRu` — external article chunks, JinaAI v3, watermark-based incremental uploads
+- `ExternalCommentEngRu` — external comment bundles (grouped by article), JinaAI v3
 
-Upload scripts: `weaviate/upload_posts.py`, `weaviate/upload_comments.py`, `weaviate/upload_videos.py`
+Upload scripts: `weaviate/upload_posts.py`, `weaviate/upload_comments.py`, `weaviate/upload_videos.py`, `weaviate/upload_external.py`
 
 **Weaviate Embedded (experimental)** — `weaviate/embedded.py` runs Weaviate in-process with Jina AI embeddings (`jina-embeddings-v3`, 1024 dims). Activate with `WEAVIATE_EMBEDDED=1 JINAAI_API_KEY=... python weaviate/embedded.py`. Data persists to `~/.local/share/weaviate-embedded/`.
 

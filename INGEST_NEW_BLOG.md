@@ -3,7 +3,7 @@
 ## Setup
 
 ```bash
-export BLOG=serborthodox   # subdomain from https://<subdomain>.substack.com
+export BLOG=martyrmade   # subdomain from https://<subdomain>.substack.com
 ```
 
 ---
@@ -57,6 +57,45 @@ python analyze_media.py --pass2 --publication ${BLOG} --api-key 'sk-ant-...'
 The default model for pass 1 is `ollama/gemma3:27b`. You can use `--model ollama/qwen2.5vl:32b` or any other Ollama vision model. Pass 2 defaults to Anthropic Haiku.
 
 Analysis results are saved both to the DB (`post_media` columns) and as JSON files alongside each image (`{image}.analysis.json`).
+
+### Step 6: Download audio and transcribe podcasts
+
+```bash
+# Download podcast audio
+python download_media.py --extract --download --type audio --publication ${BLOG}
+
+# Preview what will be transcribed (dry run)
+./transcribe_all.sh --subdomain ${BLOG} --dry-run
+
+# Transcribe all episodes (speaker counts inferred from DB heuristics)
+./transcribe_all.sh --subdomain ${BLOG}
+
+# For martyrmade (uses separate database):
+./transcribe_all.sh --subdomain martyrmade --database podcasts
+
+# Override speaker count for all episodes if needed:
+./transcribe_all.sh --subdomain ${BLOG} --num-speakers 2
+```
+
+Requires `HUGGING_FACE_HUB_TOKEN` set in your environment. See `transcribe/SETUP.md` for one-time setup (pyannote license acceptance, dependencies).
+
+### Step 7: Ingest transcripts into Postgres and Weaviate
+
+```bash
+# Ingest all transcribed episodes
+python ingest_transcripts.py posts/saved/audio/${BLOG}/
+
+# Or a single episode
+python ingest_transcripts.py posts/saved/audio/${BLOG}/<post_id>
+
+# Skip Weaviate upload
+python ingest_transcripts.py posts/saved/audio/${BLOG}/ --skip-weaviate
+
+# Dry run
+python ingest_transcripts.py posts/saved/audio/${BLOG}/ --dry-run
+```
+
+This stores speaker turns in `transcript_lines`, updates `posts.content_html` with the full transcript, and uploads chunked text to Weaviate.
 
 ### Verify
 
