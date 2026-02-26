@@ -84,7 +84,7 @@ Speaker count heuristics in `transcribe_all.sh`:
 
 ### External Sources
 
-`external_sources/load_external.py` loads scraped articles from non-Substack sites into the `external` schema. Sources: TopWar, LiveJournal, Katyusha, WSJ, Washington Post, TopCor, The Nation, Liberium, Versia.
+`external_sources/load_external.py` loads scraped articles from non-Substack sites into the `external` schema. Sources: TopWar, LiveJournal, Katyusha, WSJ, Washington Post, TopCor, The Nation, Liberium, Versia, Paul Craig Roberts, Iurie Roșca (arcaluinoe.info).
 
 ```bash
 python external_sources/load_external.py                                        # load all JSON files from scraped_data/
@@ -190,7 +190,7 @@ Key tables: `sources`, `articles`, `comments`
 - `articles.updated_at` — set on upsert, used as watermark for incremental Weaviate uploads
 - `comments.content_hash` — generated column `md5(username || body)`, used for upsert dedup (`UNIQUE(article_id, content_hash)`)
 - `comments.updated_at` — set on upsert, used as watermark for incremental Weaviate uploads
-- Sources: topwar.ru, livejournal.com, katyusha.org, wsj.com, thenation.com, topcor.ru, washingtonpost.com, liberium.ru, versia.ru
+- Sources: topwar.ru, livejournal.com, katyusha.org, wsj.com, thenation.com, topcor.ru, washingtonpost.com, liberium.ru, versia.ru, paulcraigroberts.org, arcaluinoe.info
 - Views: `articles_with_source` (joins source info), `substack_citations` (cross-references with `substack.post_links`)
 
 ## Canonical Folder Naming

@@ -36,6 +36,8 @@ FILENAME_DOMAIN_MAP = {
     'live_journal': 'livejournal.com',
     'liberium':     'liberium.ru',
     'versia_ru':    'versia.ru',
+    'pcr':          'paulcraigroberts.org',
+    'urierosca':    'arcaluinoe.info',
     'WSJ':          'wsj.com',
     'wsj':          'wsj.com',
     'washpost':     'washingtonpost.com',
