@@ -160,12 +160,16 @@ python refresh_blog.py ${BLOG} --cookies cookies.json
 
 The script archives the old post list as `{blog}_posts.{timestamp}.json` before updating.
 
-After refresh, download any new media from the new posts:
+After refresh, download and analyze any new media from the new posts:
 
 ```bash
 python download_media.py --extract --download --type image --publication ${BLOG}
 python download_media.py --download --type cover_image --publication ${BLOG}
 python download_media.py --download --type audio --publication ${BLOG}
+
+# Analyze new images (only unanalyzed images are processed)
+python analyze_media.py --publication ${BLOG}
+python analyze_media.py --pass2 --publication ${BLOG} --api-key 'sk-ant-...'
 ```
 
 ---
@@ -187,7 +191,11 @@ python download_media.py --extract --download --type image --publication ${BLOG}
 python download_media.py --download --type cover_image --publication ${BLOG}
 python download_media.py --download --type audio --publication ${BLOG}
 
-# 4. Incremental Weaviate upload (watermark picks up the refreshed posts)
+# 4. Analyze new images (only unanalyzed images are processed)
+python analyze_media.py --publication ${BLOG}
+python analyze_media.py --pass2 --publication ${BLOG} --api-key 'sk-ant-...'
+
+# 5. Incremental Weaviate upload (watermark picks up the refreshed posts)
 python weaviate/upload_posts.py
 ```
 
