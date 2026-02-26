@@ -197,7 +197,7 @@ def main():
         print(f"\nArchived old list: {archive.name}")
 
     # Step 5: Merge new posts into list and save
-    merged = existing_posts + new_posts
+    merged = new_posts + existing_posts
     new_list = {
         "newsletter": f"https://{subdomain}.substack.com",
         "count": len(merged),
