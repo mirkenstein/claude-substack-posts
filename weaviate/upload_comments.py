@@ -1,9 +1,19 @@
 #!/usr/bin/env python3
-"""Read comments from PostgreSQL and upload to Weaviate."""
+"""Read comments from PostgreSQL and upload to Weaviate.
 
+Usage:
+    python weaviate/upload_comments.py                                    # incremental (watermark)
+    python weaviate/upload_comments.py --publication martyrmade           # one publication (full)
+    python weaviate/upload_comments.py --database podcasts --all          # all from podcasts DB
+    python weaviate/upload_comments.py --database podcasts --publication martyrmade
+    python weaviate/upload_comments.py --since 2026-02-25                 # since specific date
+"""
+
+import argparse
 import sys
 import time
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 import tiktoken
@@ -23,6 +33,7 @@ def truncate_to_tokens(text: str, max_tokens: int = MAX_TOKENS) -> str:
     if len(tokens) <= max_tokens:
         return text
     return tokenizer.decode(tokens[:max_tokens])
+
 
 COMMENTS_QUERY = """
 SELECT
@@ -44,19 +55,81 @@ LEFT JOIN publications pub ON pub.id = p.publication_id
 WHERE c.deleted = false
   AND c.body IS NOT NULL
   AND c.body != ''
+  {extra_filters}
 ORDER BY c.date
 """
 
 
+# ═══════════════════════════════════════════════════════════
+# Watermark
+# ═══════════════════════════════════════════════════════════
+
+def _watermark_file(database: str) -> Path:
+    suffix = f"_{database}" if database != "substack" else ""
+    return Path(__file__).parent / f".last_upload_comments{suffix}"
+
+
+def get_last_upload_time(database: str = "substack") -> str | None:
+    wf = _watermark_file(database)
+    if wf.exists():
+        return wf.read_text().strip()
+    return None
+
+
+def save_upload_time(timestamp: str, database: str = "substack"):
+    _watermark_file(database).write_text(timestamp)
+
+
 def main():
-    # Read comments from Postgres
-    print("Reading comments from PostgreSQL...")
-    with DatabaseConnection() as conn:
+    parser = argparse.ArgumentParser(description="Upload comments to Weaviate")
+    parser.add_argument("--publication", help="Only upload comments for this subdomain")
+    parser.add_argument("--database", default="substack",
+                        help="PostgreSQL database to read from (default: substack)")
+    parser.add_argument("--all", action="store_true",
+                        help="Upload all comments (ignore watermark)")
+    parser.add_argument("--since", help="Upload comments loaded after this timestamp")
+    args = parser.parse_args()
+
+    # Build filters
+    filters = []
+    params = []
+
+    if args.publication:
+        filters.append("AND pub.subdomain = %s")
+        params.append(args.publication)
+
+    if args.since:
+        filters.append("AND c.loaded_at >= %s")
+        params.append(args.since)
+        print(f"Uploading comments loaded since {args.since}")
+    elif not args.all and not args.publication:
+        last = get_last_upload_time(args.database)
+        if last:
+            filters.append("AND c.loaded_at > %s")
+            params.append(last)
+            print(f"Incremental upload: comments loaded after {last}")
+        else:
+            print("No watermark found — uploading all comments")
+
+    extra_filters = "\n  ".join(filters)
+    query = COMMENTS_QUERY.format(extra_filters=extra_filters)
+
+    print(f"Database: {args.database} → Collection: {COMMENTS_COLLECTION}")
+    if args.publication:
+        print(f"Publication: {args.publication}")
+
+    upload_time = datetime.now(timezone.utc).isoformat()
+
+    with DatabaseConnection(database=args.database) as conn:
         with conn.cursor() as cur:
-            cur.execute(COMMENTS_QUERY)
+            cur.execute(query, params or None)
             columns = [desc[0] for desc in cur.description]
             rows = [dict(zip(columns, r)) for r in cur.fetchall()]
-    print(f"  {len(rows)} comments loaded")
+    print(f"  {len(rows)} comments to upload")
+
+    if not rows:
+        print("Nothing to upload.")
+        return
 
     # Upload to Weaviate
     client = get_client()
@@ -93,7 +166,7 @@ def main():
                 }
                 obj_uuid = uuid.uuid5(
                     uuid.NAMESPACE_DNS,
-                    f"engru-comment-{row['comment_id']}"
+                    f"engru-comment-{args.database}-{row['comment_id']}"
                 )
                 batch.add_object(properties=props, uuid=obj_uuid)
                 uploaded += 1
@@ -108,6 +181,11 @@ def main():
 
         elapsed = time.time() - start
         print(f"Done: {uploaded} uploaded in {elapsed:.1f}s")
+
+        # Save watermark (skip when filtering by --publication to avoid advancing past other pubs)
+        if not args.publication:
+            save_upload_time(upload_time, args.database)
+            print(f"Watermark saved: {upload_time}")
 
         # Verify
         result = collection.aggregate.over_all(total_count=True)
