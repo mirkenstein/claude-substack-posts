@@ -25,7 +25,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.db.connection import DatabaseConnection
 
 sys.path.insert(0, str(Path(__file__).parent))
-from config import get_client, VIDEO_COLLECTION, VIDEO_PODCASTS_COLLECTION
+from config import get_client, VIDEO_COLLECTION, VIDEO_PODCASTS_COLLECTION, VIDEO_SC_COLLECTION
 
 from weaviate.classes.config import Configure, Property, DataType
 
@@ -276,6 +276,8 @@ def main():
         collection_name = VIDEO_COLLECTION
     elif database == "podcasts":
         collection_name = VIDEO_PODCASTS_COLLECTION
+    elif database == "surgical_compass":
+        collection_name = VIDEO_SC_COLLECTION
     else:
         collection_name = f"VideoChunk_{database}"
 
