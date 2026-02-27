@@ -36,6 +36,7 @@ python load_posts.py --dir posts/${BLOG}/ --resume --log etl_${BLOG}.log -v
 
 ```bash
 python weaviate/upload_posts.py --publication ${BLOG}
+python weaviate/upload_comments.py --publication ${BLOG}
 ```
 
 ### Step 5: Download and analyze images
@@ -195,8 +196,9 @@ python download_media.py --download --type audio --publication ${BLOG}
 python analyze_media.py --publication ${BLOG}
 python analyze_media.py --pass2 --publication ${BLOG} --api-key 'sk-ant-...'
 
-# 5. Incremental Weaviate upload (watermark picks up the refreshed posts)
+# 5. Incremental Weaviate upload (watermark picks up the refreshed posts and comments)
 python weaviate/upload_posts.py
+python weaviate/upload_comments.py
 ```
 
 Notes:
