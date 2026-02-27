@@ -219,6 +219,7 @@ Collections:
 - `SubstackPostEngRu` — post chunks, OpenAI `text-embedding-3-small`, Cohere reranker
 - `SubstackCommentEngRu` — individual comments, OpenAI embeddings
 - `VideoChunkEngRu` — YouTube transcript chunks, JinaAI v3 `jina-embeddings-v3` (1024 dim), JinaAI reranker
+- `VideoChunkSC` — YouTube transcript chunks for surgical_compass database, JinaAI v3
 - `ExternalArticleEngRu` — external article chunks, JinaAI v3, watermark-based incremental uploads
 - `ExternalCommentEngRu` — external comment bundles (grouped by article), JinaAI v3
 
