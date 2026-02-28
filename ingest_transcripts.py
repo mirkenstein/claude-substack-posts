@@ -9,6 +9,8 @@ Usage:
     python ingest_transcripts.py posts/saved/audio/anti-empire/83709910
     python ingest_transcripts.py posts/saved/audio/               # all episodes
     python ingest_transcripts.py posts/saved/audio/ --skip-weaviate
+    python ingest_transcripts.py posts/saved/audio/ --skip-content-html
+    python ingest_transcripts.py posts/saved/audio/martyrmade/ --database podcasts
     python ingest_transcripts.py posts/saved/audio/ --dry-run
 """
 

@@ -71,6 +71,9 @@ python transcribe/transcribe_interview.py posts/saved/audio/anti-empire/84809249
 # Ingest transcripts into Postgres + Weaviate
 python ingest_transcripts.py posts/saved/audio/anti-empire/
 python ingest_transcripts.py posts/saved/audio/anti-empire/83709910  # single episode
+python ingest_transcripts.py posts/saved/audio/martyrmade/ --database podcasts
+python ingest_transcripts.py posts/saved/audio/martyrmade/ --database podcasts --skip-weaviate
+python ingest_transcripts.py posts/saved/audio/martyrmade/ --database podcasts --skip-content-html
 ```
 
 Requires `HUGGING_FACE_HUB_TOKEN` environment variable. Default Whisper model: `large-v3`.
