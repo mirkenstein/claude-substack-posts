@@ -2,11 +2,16 @@
 """Read comments from PostgreSQL and upload to ChromaDB with Jina AI embeddings.
 
 Usage:
-    python upload_comments.py
+    python upload_comments.py                          # upload only new comments (since last run)
+    python upload_comments.py --all                    # re-upload everything
+    python upload_comments.py --publication drlivci     # upload one publication
+    python upload_comments.py --since '2026-02-18'     # comments loaded after a date
 """
 
+import argparse
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import tiktoken
@@ -21,6 +26,8 @@ MAX_TOKENS = 8000
 BATCH_SIZE = 50
 tokenizer = tiktoken.get_encoding("cl100k_base")
 
+WATERMARK_FILE = Path(__file__).parent / ".last_upload_comments"
+
 
 def truncate_to_tokens(text: str, max_tokens: int = MAX_TOKENS) -> str:
     tokens = tokenizer.encode(text)
@@ -29,7 +36,17 @@ def truncate_to_tokens(text: str, max_tokens: int = MAX_TOKENS) -> str:
     return tokenizer.decode(tokens[:max_tokens])
 
 
-COMMENTS_QUERY = """
+def get_last_upload_time() -> str | None:
+    if WATERMARK_FILE.exists():
+        return WATERMARK_FILE.read_text().strip()
+    return None
+
+
+def save_upload_time(timestamp: str):
+    WATERMARK_FILE.write_text(timestamp)
+
+
+COMMENTS_QUERY_BASE = """
 SELECT
     c.id              AS comment_id,
     c.post_id,
@@ -49,18 +66,54 @@ LEFT JOIN publications pub ON pub.id = p.publication_id
 WHERE c.deleted = false
   AND c.body IS NOT NULL
   AND c.body != ''
-ORDER BY c.date
 """
 
 
+def build_query(args) -> tuple[str, list]:
+    conditions = []
+    params = []
+
+    if args.since:
+        conditions.append("c.date >= %s")
+        params.append(args.since)
+    elif not args.all and not args.publication:
+        last = get_last_upload_time()
+        if last:
+            conditions.append("c.date > %s")
+            params.append(last)
+
+    if args.publication:
+        conditions.append("pub.subdomain = %s")
+        params.append(args.publication)
+
+    query = COMMENTS_QUERY_BASE
+    if conditions:
+        query += "  AND " + "\n  AND ".join(conditions) + "\n"
+    query += "ORDER BY c.date"
+    return query, params
+
+
 def main():
+    parser = argparse.ArgumentParser(description="Upload comments from PostgreSQL to ChromaDB")
+    parser.add_argument("--all", action="store_true", help="Re-upload all comments (ignore watermark)")
+    parser.add_argument("--publication", metavar="SUBDOMAIN", help="Only upload comments from this subdomain")
+    parser.add_argument("--since", metavar="TIMESTAMP", help="Upload comments after this date")
+    args = parser.parse_args()
+
+    query, params = build_query(args)
+    upload_start = datetime.now(timezone.utc).isoformat()
+
     print("Reading comments from PostgreSQL...")
     with DatabaseConnection() as conn:
         with conn.cursor() as cur:
-            cur.execute(COMMENTS_QUERY)
+            cur.execute(query, params)
             columns = [desc[0] for desc in cur.description]
             rows = [dict(zip(columns, r)) for r in cur.fetchall()]
     print(f"  {len(rows)} comments loaded")
+
+    if not rows:
+        print("Nothing new to upload.")
+        return
 
     client = get_client()
     jina_ef = get_jina_ef()
@@ -121,6 +174,11 @@ def main():
     elapsed = time.time() - start
     print(f"Done: {uploaded} uploaded in {elapsed:.1f}s ({uploaded/elapsed:.0f}/sec)")
     print(f"Collection count: {collection.count()}")
+
+    # Save watermark (skip if --publication to avoid advancing past other pubs)
+    if not args.publication:
+        save_upload_time(upload_start)
+        print(f"Watermark saved: {upload_start}")
 
 
 if __name__ == "__main__":

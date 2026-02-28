@@ -305,6 +305,8 @@ def main():
                         help="Skip Weaviate upload (Postgres only)")
     parser.add_argument("--skip-content-html", action="store_true",
                         help="Don't update posts.content_html")
+    parser.add_argument("--database", default="substack",
+                        help="PostgreSQL database name (default: substack)")
     parser.add_argument("--dry-run", action="store_true",
                         help="Show what would be ingested without writing")
     args = parser.parse_args()
@@ -326,7 +328,7 @@ def main():
             print(f"  {post_id}: {len(segments)} segments, speakers: {', '.join(sorted(speakers))}")
         return
 
-    db = DatabaseConnection()
+    db = DatabaseConnection(database=args.database)
     try:
         conn = db.connect()
 
