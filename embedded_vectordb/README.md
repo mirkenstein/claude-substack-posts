@@ -14,7 +14,7 @@ Experimental alternatives to the primary Weaviate Docker setup. All three use **
 | **Search modes** | semantic, hybrid, rerank | semantic, hybrid, rerank | vector, FTS, hybrid | semantic |
 | **Data path** | Docker volume | `~/.local/share/weaviate-embedded/` | `~/.local/share/lancedb-substack/` | `~/.local/share/chromadb-substack/` |
 | **Ports** | 8080 / 50051 | 8079 / 50060 | N/A | N/A |
-| **Python 3.14** | OK | OK | OK | Needs manual patch (pydantic v1 incompatibility) |
+| **Python 3.14** | OK | OK | OK | Needs patched build (pydantic v1 incompatibility) |
 
 ## 1. Weaviate Embedded (Jina AI)
 
@@ -53,13 +53,43 @@ JINA_API_KEY=... python embedded_vectordb/chromadb/upload_posts.py --publication
 JINA_API_KEY=... python embedded_vectordb/chromadb/search.py "Wagner mutiny"
 ```
 
-### ChromaDB Python 3.14 Patch
+### ChromaDB Python 3.14 Fix
 
-Applied to `.venv/lib64/python3.14/site-packages/chromadb/config.py`:
+ChromaDB's `Settings` class uses pydantic v1's `BaseSettings` which breaks on Python 3.14 (`chroma_server_nofile` type inference failure). See [chroma-core/chroma#5996](https://github.com/chroma-core/chroma/issues/5996).
+
+**Permanent fix**: A local clone of chromadb at `~/PycharmProjects/chroma/` has the fix (commit `4da7add31` — drops pydantic v1 compat layer, migrates to pydantic v2 `field_validator` + `pydantic-settings`). This PR is pending merge upstream.
+
+### Local chroma-mcp venv (MCP server)
+
+The `chroma-mcp` MCP server bundles upstream chromadb which breaks on Python 3.14. A dedicated venv at `~/chroma-mcp-local/` uses the patched chromadb build:
+
+```bash
+# One-time setup (already done)
+python3.14 -m venv ~/chroma-mcp-local
+~/chroma-mcp-local/bin/pip install ~/PycharmProjects/chroma/    # patched chromadb
+~/chroma-mcp-local/bin/pip install chroma-mcp --no-deps         # MCP server without overwriting chromadb
+~/chroma-mcp-local/bin/pip install mcp posthog backoff httpx-sse python-multipart starlette sse-starlette  # runtime deps
+```
+
+MCP server config (replace `uvx` command):
+```json
+{
+  "command": "/home/mnm/chroma-mcp-local/bin/chroma-mcp",
+  "args": ["--chroma-path", "/home/mnm/.local/share/chromadb-substack"]
+}
+```
+
+Once the chromadb PR is merged and released to PyPI, the chroma-mcp package just needs a version pin bump and `uvx` will work again natively.
+
+### Legacy manual patch (deprecated)
+
+Previously applied directly to `.venv/lib64/python3.14/site-packages/chromadb/config.py`:
 1. Import `BaseSettings` from `pydantic_settings` (install: `pip install pydantic-settings`)
 2. Move `chroma_server_nofile` field before its `@validator` decorator
 3. Add type annotations to `chroma_coordinator_host: str`, `chroma_logservice_host: str`, `chroma_logservice_port: int`
 4. Add `extra = "allow"` to the inner `Config` class
+
+This breaks on every `pip install` or cache clear. Use the local venv approach above instead.
 
 ## Environment Variables
 
