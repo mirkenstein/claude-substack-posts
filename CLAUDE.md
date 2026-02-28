@@ -95,6 +95,7 @@ python external_sources/load_external.py --file topcor_articles.json            
 python external_sources/load_external.py --file new_cumulative/topwar_articles.json  # load from subdirectory
 python external_sources/load_external.py --recreate                             # drop & recreate schema, then load all
 python external_sources/load_external.py --recreate --no-load                   # just recreate schema
+python external_sources/load_external.py --database podcasts                    # load into a different database
 ```
 
 - Schema defined in `external_sources/create_external_tables.sql`
@@ -114,6 +115,7 @@ python weaviate/upload_external.py --all              # re-upload everything
 python weaviate/upload_external.py --since 2025-01-01 # upload records updated after date
 python weaviate/upload_external.py --articles-only    # only articles
 python weaviate/upload_external.py --comments-only    # only comments
+python weaviate/upload_external.py --database podcasts # upload to ExternalArticlePodcasts/ExternalCommentPodcasts
 ```
 
 ### Media Download and Analysis
