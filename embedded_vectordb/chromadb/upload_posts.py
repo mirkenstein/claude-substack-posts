@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
 """Read posts from PostgreSQL, chunk, and upload to ChromaDB with Jina AI embeddings.
 
+Requires JINA_API_KEY environment variable (Jina AI API key for client-side
+embedding generation). ChromaDB computes embeddings client-side, unlike Weaviate
+which uses a server-side vectorizer.
+
 Usage:
-    python upload_posts.py                          # upload only new posts (since last run)
-    python upload_posts.py --all                    # re-upload everything
-    python upload_posts.py --publication drlivci     # upload one publication
-    python upload_posts.py --since '2026-02-18'     # posts loaded after a date
+    JINA_API_KEY=... python upload_posts.py                          # incremental (since last run)
+    JINA_API_KEY=... python upload_posts.py --all                    # re-upload everything
+    JINA_API_KEY=... python upload_posts.py --publication drlivci     # one publication
+    JINA_API_KEY=... python upload_posts.py --since '2026-02-18'     # posts loaded after a date
+    JINA_API_KEY=... python upload_posts.py --database podcasts --publication martyrmade
 """
 
 import argparse
@@ -206,6 +211,7 @@ def main():
     parser.add_argument("--all", action="store_true", help="Re-upload all posts (ignore watermark)")
     parser.add_argument("--publication", metavar="SUBDOMAIN", help="Only upload posts from this subdomain")
     parser.add_argument("--since", metavar="TIMESTAMP", help="Upload posts loaded after this timestamp")
+    parser.add_argument("--database", default="substack", help="PostgreSQL database name (default: substack)")
     args = parser.parse_args()
 
     query, params = build_query(args)
@@ -214,7 +220,7 @@ def main():
     upload_start = datetime.now(timezone.utc).isoformat()
 
     print("Reading posts from PostgreSQL...")
-    with DatabaseConnection() as conn:
+    with DatabaseConnection(database=args.database) as conn:
         with conn.cursor() as cur:
             cur.execute(query, params)
             columns = [desc[0] for desc in cur.description]
