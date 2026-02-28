@@ -15,6 +15,7 @@ Usage:
     python upload_external.py --create-only      # only create collections
     python upload_external.py --articles-only    # only articles
     python upload_external.py --comments-only    # only comments
+    python upload_external.py --database podcasts  # upload from podcasts DB → ExternalArticlePodcasts
 """
 
 import argparse
@@ -36,6 +37,8 @@ from config import (
     get_client,
     EXTERNAL_ARTICLES_COLLECTION,
     EXTERNAL_COMMENTS_COLLECTION,
+    EXTERNAL_ARTICLES_PODCASTS_COLLECTION,
+    EXTERNAL_COMMENTS_PODCASTS_COLLECTION,
     CHUNK_SIZE, OVERLAP, MIN_CHUNK_SIZE,
 )
 
@@ -89,9 +92,8 @@ def chunk_by_tokens(text: str) -> list[str]:
 # Collection creation
 # ---------------------------------------------------------------------------
 
-def create_articles_collection(client):
-    """Create ExternalArticleEngRu collection with JinaAI v3 vectorizer."""
-    name = EXTERNAL_ARTICLES_COLLECTION
+def create_articles_collection(client, name=EXTERNAL_ARTICLES_COLLECTION):
+    """Create external articles collection with JinaAI v3 vectorizer."""
     if client.collections.exists(name):
         resp = input(f"{name} exists. Delete and recreate? (yes/no): ")
         if resp.lower() == "yes":
@@ -140,9 +142,8 @@ def create_articles_collection(client):
     print(f"  Created {name}")
 
 
-def create_comments_collection(client):
-    """Create ExternalCommentEngRu collection with JinaAI v3 vectorizer."""
-    name = EXTERNAL_COMMENTS_COLLECTION
+def create_comments_collection(client, name=EXTERNAL_COMMENTS_COLLECTION):
+    """Create external comments collection with JinaAI v3 vectorizer."""
     if client.collections.exists(name):
         resp = input(f"{name} exists. Delete and recreate? (yes/no): ")
         if resp.lower() == "yes":
@@ -188,19 +189,22 @@ def create_comments_collection(client):
 # Watermark (incremental upload tracking)
 # ---------------------------------------------------------------------------
 
-WATERMARK_FILE = Path(__file__).parent / ".last_upload_external"
+def _watermark_file(database: str) -> Path:
+    suffix = f"_{database}" if database != "substack" else ""
+    return Path(__file__).parent / f".last_upload_external{suffix}"
 
 
-def get_last_upload_time() -> str | None:
+def get_last_upload_time(database: str = "substack") -> str | None:
     """Read the watermark timestamp from the last successful upload."""
-    if WATERMARK_FILE.exists():
-        return WATERMARK_FILE.read_text().strip()
+    wf = _watermark_file(database)
+    if wf.exists():
+        return wf.read_text().strip()
     return None
 
 
-def save_upload_time(timestamp: str):
+def save_upload_time(timestamp: str, database: str = "substack"):
     """Save the current upload timestamp as watermark."""
-    WATERMARK_FILE.write_text(timestamp)
+    _watermark_file(database).write_text(timestamp)
 
 
 # ---------------------------------------------------------------------------
@@ -412,9 +416,9 @@ def bundle_comments(comments: list[dict], article_meta: dict) -> list[dict]:
 # Upload
 # ---------------------------------------------------------------------------
 
-def upload_article_chunks(client, articles: list[dict]):
+def upload_article_chunks(client, articles: list[dict], collection_name: str = EXTERNAL_ARTICLES_COLLECTION):
     """Chunk and upload articles to Weaviate, with per-source progress."""
-    collection = client.collections.get(EXTERNAL_ARTICLES_COLLECTION)
+    collection = client.collections.get(collection_name)
 
     # Group by source domain
     by_source = {}
@@ -463,12 +467,12 @@ def upload_article_chunks(client, articles: list[dict]):
     print(f"\nArticles total: {total_chunks} chunks, {total_errors} errors in {elapsed:.1f}s")
 
     count = collection.aggregate.over_all(total_count=True).total_count
-    print(f"Collection {EXTERNAL_ARTICLES_COLLECTION} count: {count}")
+    print(f"Collection {collection_name} count: {count}")
 
 
-def upload_comment_bundles(client, comments: list[dict]):
+def upload_comment_bundles(client, comments: list[dict], collection_name: str = EXTERNAL_COMMENTS_COLLECTION):
     """Bundle and upload comments to Weaviate, grouped by article and source."""
-    collection = client.collections.get(EXTERNAL_COMMENTS_COLLECTION)
+    collection = client.collections.get(collection_name)
 
     # Group comments by article_id
     by_article = {}
@@ -539,7 +543,7 @@ def upload_comment_bundles(client, comments: list[dict]):
     print(f"\nComments total: {total_bundles} bundles, {total_errors} errors in {elapsed:.1f}s")
 
     count = collection.aggregate.over_all(total_count=True).total_count
-    print(f"Collection {EXTERNAL_COMMENTS_COLLECTION} count: {count}")
+    print(f"Collection {collection_name} count: {count}")
 
 
 # ---------------------------------------------------------------------------
@@ -560,23 +564,35 @@ def main():
                         help="Re-upload all (ignore watermark)")
     parser.add_argument("--since", metavar="TIMESTAMP",
                         help="Upload records updated after this timestamp (ISO format)")
+    parser.add_argument("--database", default="substack",
+                        help="PostgreSQL database name (default: substack)")
     args = parser.parse_args()
 
+    database = args.database
     do_articles = not args.comments_only
     do_comments = not args.articles_only
+
+    # Select collections based on database
+    if database == "podcasts":
+        articles_collection = EXTERNAL_ARTICLES_PODCASTS_COLLECTION
+        comments_collection = EXTERNAL_COMMENTS_PODCASTS_COLLECTION
+    else:
+        articles_collection = EXTERNAL_ARTICLES_COLLECTION
+        comments_collection = EXTERNAL_COMMENTS_COLLECTION
 
     # Determine the cutoff for incremental upload
     since = None
     if args.since:
         since = args.since
     elif not args.all:
-        since = get_last_upload_time()
+        since = get_last_upload_time(database)
 
     upload_start = datetime.now(timezone.utc).isoformat()
 
     client = get_client()
     try:
         print(f"Connected to Weaviate (ready: {client.is_ready()})")
+        print(f"Database: {database} → Articles: {articles_collection}, Comments: {comments_collection}")
 
         if since:
             print(f"Incremental upload: records updated after {since}")
@@ -586,16 +602,16 @@ def main():
         # Create collections
         if not args.upload_only:
             if do_articles:
-                create_articles_collection(client)
+                create_articles_collection(client, articles_collection)
             if do_comments:
-                create_comments_collection(client)
+                create_comments_collection(client, comments_collection)
 
         if args.create_only:
             return
 
         # Read from PostgreSQL
-        print("\nReading from PostgreSQL (external schema)...")
-        with DatabaseConnection() as conn:
+        print(f"\nReading from PostgreSQL ({database}, external schema)...")
+        with DatabaseConnection(database=database) as conn:
             with conn.cursor() as cur:
                 cur.execute("SET search_path TO external, public")
 
@@ -607,13 +623,12 @@ def main():
                 print(f"  {len(comments)} comments")
 
         # Upload
-        failed = False
         if do_articles:
             if articles:
                 print(f"\n{'='*60}")
                 print("UPLOADING ARTICLES")
                 print(f"{'='*60}")
-                upload_article_chunks(client, articles)
+                upload_article_chunks(client, articles, articles_collection)
             else:
                 print("\nNo new articles to upload.")
 
@@ -622,12 +637,12 @@ def main():
                 print(f"\n{'='*60}")
                 print("UPLOADING COMMENTS")
                 print(f"{'='*60}")
-                upload_comment_bundles(client, comments)
+                upload_comment_bundles(client, comments, comments_collection)
             else:
                 print("\nNo new comments to upload.")
 
         # Save watermark on success
-        save_upload_time(upload_start)
+        save_upload_time(upload_start, database)
         print(f"\nWatermark saved: {upload_start}")
 
     finally:

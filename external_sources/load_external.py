@@ -7,6 +7,7 @@ Usage:
     python external_sources/load_external.py --file katysha_articles.json
     python external_sources/load_external.py --recreate               # drop & recreate schema, then load
     python external_sources/load_external.py --recreate --no-load     # just recreate schema
+    python external_sources/load_external.py --database podcasts      # load into a different database
 """
 
 import argparse
@@ -18,8 +19,7 @@ from pathlib import Path
 import psycopg2
 import psycopg2.errors
 
-DB_URL = ("postgresql://postgres:postgres@localhost:5432/substack"
-          "")
+DB_URL_BASE = "postgresql://postgres:postgres@localhost:5432/"
 SCRAPED_DIR = Path(__file__).parent / "scraped_data"
 SQL_FILE = Path(__file__).parent / "create_external_tables.sql"
 
@@ -38,6 +38,8 @@ FILENAME_DOMAIN_MAP = {
     'versia_ru':    'versia.ru',
     'pcr':          'paulcraigroberts.org',
     'urierosca':    'arcaluinoe.info',
+    'unlimitedhangout': 'unlimitedhangout.com',
+    'disobedientmedia': 'disobedientmedia.com',
     'WSJ':          'wsj.com',
     'wsj':          'wsj.com',
     'washpost':     'washingtonpost.com',
@@ -348,11 +350,12 @@ def load_json_file(conn, filepath, recovery_source=None):
 def main():
     parser = argparse.ArgumentParser(description='Load external articles into PostgreSQL')
     parser.add_argument('--file', help='Load a single JSON file from scraped_data/')
+    parser.add_argument('--database', default='substack', help='PostgreSQL database name (default: substack)')
     parser.add_argument('--recreate', action='store_true', help='Drop and recreate external schema before loading')
     parser.add_argument('--no-load', action='store_true', help='With --recreate, only recreate schema without loading data')
     args = parser.parse_args()
 
-    conn = psycopg2.connect(DB_URL)
+    conn = psycopg2.connect(DB_URL_BASE + args.database)
 
     if args.recreate:
         recreate_schema(conn)
