@@ -32,11 +32,16 @@ Re-run with `--resume` to pick up where you left off if interrupted.
 python load_posts.py --dir posts/${BLOG}/ --resume --log etl_${BLOG}.log -v
 ```
 
-### Step 4: Upload to Weaviate
+### Step 4: Upload to Weaviate and ChromaDB
 
 ```bash
+# Weaviate
 python weaviate/upload_posts.py --publication ${BLOG}
 python weaviate/upload_comments.py --publication ${BLOG}
+
+# ChromaDB (requires JINA_API_KEY for client-side embeddings)
+JINA_API_KEY=... python embedded_vectordb/chromadb/upload_posts.py --publication ${BLOG}
+JINA_API_KEY=... python embedded_vectordb/chromadb/upload_comments.py --publication ${BLOG}
 ```
 
 ### Step 5: Download and analyze images
@@ -161,7 +166,14 @@ python refresh_blog.py ${BLOG} --cookies cookies.json
 
 The script archives the old post list as `{blog}_posts.{timestamp}.json` before updating.
 
-After refresh, download and analyze any new media from the new posts:
+After refresh, upload to ChromaDB (refresh_blog.py only handles Weaviate):
+
+```bash
+JINA_API_KEY=... python embedded_vectordb/chromadb/upload_posts.py
+JINA_API_KEY=... python embedded_vectordb/chromadb/upload_comments.py
+```
+
+Download and analyze any new media from the new posts:
 
 ```bash
 python download_media.py --extract --download --type image --publication ${BLOG}
@@ -196,9 +208,11 @@ python download_media.py --download --type audio --publication ${BLOG}
 python analyze_media.py --publication ${BLOG}
 python analyze_media.py --pass2 --publication ${BLOG} --api-key 'sk-ant-...'
 
-# 5. Incremental Weaviate upload (watermark picks up the refreshed posts and comments)
+# 5. Incremental Weaviate + ChromaDB upload (watermark picks up the refreshed posts and comments)
 python weaviate/upload_posts.py
 python weaviate/upload_comments.py
+JINA_API_KEY=... python embedded_vectordb/chromadb/upload_posts.py
+JINA_API_KEY=... python embedded_vectordb/chromadb/upload_comments.py
 ```
 
 Notes:
