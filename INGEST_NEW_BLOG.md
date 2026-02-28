@@ -1,9 +1,9 @@
 # Ingest a New Substack Blog
 
 ## Setup
-
+https://huabinoliver.substack.com/
 ```bash
-export BLOG=martyrmade   # subdomain from https://<subdomain>.substack.com
+export BLOG=huabinoliver   # subdomain from https://<subdomain>.substack.com
 ```
 
 ---
@@ -222,3 +222,66 @@ Notes:
 - Step 3 re-extracts media URLs from post HTML and downloads any that are new (already-downloaded files are skipped)
 - Step 4 uses the watermark (no `--publication` flag) so only the refreshed posts get re-uploaded
 - Do **not** use `--resume` in step 1 — you want to overwrite the existing files with fresh data
+
+---
+
+## External Sources (non-Substack articles)
+
+Load scraped articles from external sites (TopWar, LiveJournal, WSJ, Unlimited Hangout, etc.) into the `external` schema and Weaviate.
+
+### Load into PostgreSQL
+
+```bash
+# Load all JSON files from scraped_data/
+python external_sources/load_external.py
+
+# Load a single file
+python external_sources/load_external.py --file topcor_articles.json
+
+# Load from subdirectory
+python external_sources/load_external.py --file new_cumulative/topwar_articles.json
+
+# Load into a different database (e.g. podcasts)
+python external_sources/load_external.py --database podcasts
+
+# Drop & recreate schema, then load all
+python external_sources/load_external.py --recreate
+
+# Just recreate schema (no data load)
+python external_sources/load_external.py --recreate --no-load
+```
+
+Source domain is inferred from filename prefix (e.g. `topwar_*` → `topwar.ru`). New sources are auto-created. JSON files go in `external_sources/scraped_data/`.
+
+### Upload to Weaviate
+
+```bash
+# Incremental upload (new/updated since last run)
+python weaviate/upload_external.py
+
+# Re-upload everything
+python weaviate/upload_external.py --all
+
+# Upload records updated after a date
+python weaviate/upload_external.py --since 2025-01-01
+
+# Only articles or only comments
+python weaviate/upload_external.py --articles-only
+python weaviate/upload_external.py --comments-only
+
+# Upload to podcasts collections (ExternalArticlePodcasts / ExternalCommentPodcasts)
+python weaviate/upload_external.py --database podcasts
+```
+
+### First-time setup for a new database
+
+```bash
+# 1. Create the external schema in the target database
+python external_sources/load_external.py --database podcasts --recreate --no-load
+
+# 2. Load articles
+python external_sources/load_external.py --database podcasts
+
+# 3. Create Weaviate collections and upload
+python weaviate/upload_external.py --database podcasts
+```
