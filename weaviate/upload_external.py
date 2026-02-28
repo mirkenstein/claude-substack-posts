@@ -111,7 +111,7 @@ def create_articles_collection(client):
             source_properties=["content"],
         ),
         reranker_config=Configure.Reranker.jinaai(
-            model="jina-reranker-v2-base-multilingual",
+            model="jina-reranker-v3",
         ),
         properties=[
             Property(name="content", data_type=DataType.TEXT,
@@ -162,7 +162,7 @@ def create_comments_collection(client):
             source_properties=["commentBundle"],
         ),
         reranker_config=Configure.Reranker.jinaai(
-            model="jina-reranker-v2-base-multilingual",
+            model="jina-reranker-v3",
         ),
         properties=[
             Property(name="commentBundle", data_type=DataType.TEXT,

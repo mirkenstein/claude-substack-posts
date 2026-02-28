@@ -27,10 +27,10 @@ def _posts_reranker_config():
     """Return reranker config based on connection mode."""
     if USE_EMBEDDED:
         return Configure.Reranker.jinaai(
-            model="jina-reranker-v2-base-multilingual",
+            model="jina-reranker-v3",
         )
     return Configure.Reranker.cohere(
-        model="rerank-english-v3.0"
+        model="rerank-v3.5"
     )
 
 

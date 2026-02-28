@@ -84,7 +84,7 @@ def create_video_collection(client, collection_name):
             source_properties=["transcript"],
         ),
         reranker_config=Configure.Reranker.jinaai(
-            model="jina-reranker-v2-base-multilingual",
+            model="jina-reranker-v3",
         ),
         properties=[
             Property(name="transcript", data_type=DataType.TEXT,
