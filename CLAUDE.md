@@ -273,20 +273,22 @@ See `embedded_vectordb/README.md` for full comparison and usage.
 **MotherDuck (experimental)** — SaaS DuckDB with built-in `embedding()` (OpenAI `text-embedding-3-small`, 512 dim) and `array_cosine_similarity()`. Auth via `MOTHERDUCK_TOKEN` env var. Table: `substack_posts` in `my_db`.
 
 ```bash
-python motherduck/upload_posts.py                           # load from both databases
+python motherduck/upload_posts.py                           # incremental (new posts only)
 python motherduck/upload_posts.py --database substack       # substack DB only
 python motherduck/upload_posts.py --database podcasts       # podcasts DB only
 python motherduck/upload_posts.py --publication edwardslavsquat  # one publication
+python motherduck/upload_posts.py --full                    # drop and recreate (full reload)
 python motherduck/upload_posts.py --skip-embeddings         # insert only, no embedding()
 python motherduck/upload_posts.py --embed-only              # only run embedding update
 ```
 
-Tables: `substack_posts` (chunked post content), `substack_comments` (individual comments). Full reload each time (drops and recreates). Upload scripts: `motherduck/upload_posts.py`, `motherduck/upload_comments.py`.
+Tables: `substack_posts` (chunked post content), `substack_comments` (individual comments). Default is incremental (dedup by post_id/comment_id, embed only new rows). Use `--full` to drop and recreate. Upload scripts: `motherduck/upload_posts.py`, `motherduck/upload_comments.py`.
 
 ```bash
-python motherduck/upload_comments.py                           # load from both databases
+python motherduck/upload_comments.py                           # incremental (new comments only)
 python motherduck/upload_comments.py --database substack       # substack DB only
 python motherduck/upload_comments.py --publication martyrmade  # one publication
+python motherduck/upload_comments.py --full                    # drop and recreate (full reload)
 python motherduck/upload_comments.py --skip-embeddings         # insert only
 python motherduck/upload_comments.py --embed-only              # only run embedding update
 ```
