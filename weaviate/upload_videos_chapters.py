@@ -57,7 +57,7 @@ def parse_chapters_from_description(description: str) -> list[dict]:
 
     chapters = []
     for match in re.finditer(
-        r'(?:^|\n)\s*(?:(\d+):)?(\d{1,2}):(\d{2})\s+(.+)',
+        r'(?:^|\n)\s*(?:[Cc]hapters?:\s*)?(?:(\d+):)?(\d{1,2}):(\d{2})\s+(.+)',
         description
     ):
         hours = int(match.group(1)) if match.group(1) else 0
