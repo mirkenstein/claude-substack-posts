@@ -291,7 +291,17 @@ python motherduck/upload_comments.py --skip-embeddings         # insert only
 python motherduck/upload_comments.py --embed-only              # only run embedding update
 ```
 
-Posts reuse chunking logic from `weaviate/upload_posts.py` (CHUNK_SIZE=700, OVERLAP=150). Semantic search example:
+YouTube video chapters from the `podcasts` PostgreSQL database: `motherduck/upload_video_chapters.py`. Two tables for catalog browsing and semantic search:
+- `youtube_videos` — one row per video (281 rows), description embedded
+- `youtube_chapters` — one row per chapter (3,384 rows), transcript embedded. Videos without chapters get a single "Full Transcript" row.
+
+```bash
+python motherduck/upload_video_chapters.py                     # full reload (default: podcasts DB)
+python motherduck/upload_video_chapters.py --skip-embeddings   # insert only
+python motherduck/upload_video_chapters.py --embed-only        # only run embeddings
+```
+
+Posts reuse chunking logic from `weaviate/upload_posts.py` (CHUNK_SIZE=700, OVERLAP=150). All tables have FTS indexes (BM25) and vector embeddings (OpenAI `text-embedding-3-small`, 512 dim). Semantic search example:
 ```sql
 SELECT title, subdomain, array_cosine_similarity(embedding('search query'), content_embedding) AS score
 FROM substack_posts ORDER BY score DESC LIMIT 10;
