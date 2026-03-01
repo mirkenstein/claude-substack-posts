@@ -166,6 +166,28 @@ Key files:
 - `analyze_media.py` — CLI orchestrator
 - `src/image_analyzer.py` — LLM vision backends (Anthropic, Ollama), prompt templates, JSON parsing, magic-bytes MIME detection
 
+### Chapter-Aware Video Chunking
+
+`weaviate/upload_videos_chapters.py` uploads YouTube transcript segments to Weaviate using chapter boundaries instead of fixed token windows. Dedicated collection `VideoChapterChunkPodcasts`, separate from the fixed-window `VideoChunkPodcasts`.
+
+```bash
+python weaviate/upload_videos_chapters.py --database podcasts         # incremental
+python weaviate/upload_videos_chapters.py --database podcasts --all   # re-upload all
+python weaviate/upload_videos_chapters.py --database podcasts --upload-only
+python weaviate/upload_videos_chapters.py --database podcasts --create-only
+python weaviate/upload_videos_chapters.py --database podcasts --since '2026-02-28'
+```
+
+**Data flow**: Reads from `youtube.transcript_segments` (per-segment timestamps) and `youtube.video_chapters` (chapter markers). Groups segments by chapter boundary, sub-chunks large chapters (>1000 tokens) with overlap, merges small chapters (<500 tokens) forward. Videos without chapters fall back to fixed-window chunking with `chunkMethod="fixed_window"`.
+
+**Chapter bootstrap**: The script parses chapter timestamps (`H:MM:SS` / `MM:SS` patterns) from `youtube.video_transcripts.description` and populates `youtube.video_chapters` on startup (ON CONFLICT DO NOTHING). This is an exception to the normal pattern where PostgreSQL is populated by separate ETL scripts and Weaviate upload scripts only read from it. The chapter data originates from video descriptions already in PG — the script just extracts structured data from unstructured text.
+
+**Chunk properties**: `transcript` (vectorized), `description`, `videoId`, `videoTitle`, `channelName`, `videoUrl`, `uploadDate`, `playlistName`, `chapterTitle`, `chapterNumber`, `chapterStartTime`, `chunkMethod` (`chapter_exact` | `fixed_window`), `chunkNumber`, `totalChunks`, `chunkTokens`
+
+**Watermark**: `.last_upload_videos_chapters_{database}`, filters on `transcript_segments.created_at`.
+
+**Deterministic UUIDs**: `uuid5(NAMESPACE_DNS, "chapter-video-{videoId}-ch{chapterNumber}-{chunkNumber}")` — handles duplicate playlist entries via dedup.
+
 ### Wayback Machine
 
 Anti-empire.com WordPress archive is in `~/anti-empire/` with its own `README.md` documenting the `waybackup` tool usage, two-domain split (HTML vs wp-content), and monitoring.
@@ -182,6 +204,14 @@ Key tables: `publications`, `authors`, `posts`, `comments`, `tags`, `post_links`
 - `posts.content_text` — plain text with full-text search index
 - `load_status` — tracks which files have been loaded (used by `load_posts.py --resume`)
 - `post_media` — tracks images/audio URLs and download status
+
+### Schema: `youtube` (podcasts database)
+
+YouTube video data. Key tables: `playlists`, `playlist_videos`, `video_transcripts`, `transcript_segments`, `video_chapters`
+
+- `video_transcripts` — video metadata + full transcript text (used by `upload_videos.py`)
+- `transcript_segments` — timestamped transcript segments `(video_id, segment_index, start_seconds, end_seconds, text)`
+- `video_chapters` — chapter markers `(video_id, position, start_seconds, title)`, populated by `upload_videos_chapters.py` from video descriptions
 
 ### Schema: `external`
 
@@ -225,10 +255,11 @@ Collections:
 - `SubstackCommentEngRu` — individual comments, OpenAI embeddings
 - `VideoChunkEngRu` — YouTube transcript chunks, JinaAI v3 `jina-embeddings-v3` (1024 dim), JinaAI reranker
 - `VideoChunkSC` — YouTube transcript chunks for surgical_compass database, JinaAI v3
+- `VideoChapterChunkPodcasts` — chapter-aware YouTube transcript chunks for podcasts database, JinaAI v3 (see below)
 - `ExternalArticleEngRu` — external article chunks, JinaAI v3, watermark-based incremental uploads
 - `ExternalCommentEngRu` — external comment bundles (grouped by article), JinaAI v3
 
-Upload scripts: `weaviate/upload_posts.py`, `weaviate/upload_comments.py`, `weaviate/upload_videos.py`, `weaviate/upload_external.py`
+Upload scripts: `weaviate/upload_posts.py`, `weaviate/upload_comments.py`, `weaviate/upload_videos.py`, `weaviate/upload_videos_chapters.py`, `weaviate/upload_external.py`
 
 **Weaviate Embedded (experimental)** — `weaviate/embedded.py` runs Weaviate in-process with Jina AI embeddings (`jina-embeddings-v3`, 1024 dims). Activate with `WEAVIATE_EMBEDDED=1 JINAAI_API_KEY=... python weaviate/embedded.py`. Data persists to `~/.local/share/weaviate-embedded/`.
 
