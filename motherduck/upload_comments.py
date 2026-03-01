@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """Upload Substack comments to MotherDuck for semantic search.
 
-Uses MotherDuck's built-in embedding() function (OpenAI text-embedding-3-small, 512 dim).
+Default mode is incremental: only inserts new comments not already in MotherDuck.
+Embeddings are only generated for rows that don't have them yet.
 
 Usage:
-    python motherduck/upload_comments.py                           # load from both databases
+    python motherduck/upload_comments.py                           # incremental from both DBs
     python motherduck/upload_comments.py --database substack       # substack DB only
     python motherduck/upload_comments.py --database podcasts       # podcasts DB only
     python motherduck/upload_comments.py --publication edwardslavsquat  # one publication
+    python motherduck/upload_comments.py --full                    # drop and recreate (full reload)
     python motherduck/upload_comments.py --skip-embeddings         # insert only, no embedding()
     python motherduck/upload_comments.py --embed-only              # only run embedding update
 """
@@ -30,7 +32,7 @@ tokenizer = tiktoken.get_encoding("cl100k_base")
 MOTHERDUCK_DB = "md:my_db"
 
 CREATE_TABLE_SQL = """
-CREATE OR REPLACE TABLE substack_comments (
+CREATE TABLE IF NOT EXISTS substack_comments (
     comment_id      VARCHAR,
     post_id         VARCHAR,
     post_title      VARCHAR,
@@ -110,6 +112,17 @@ def read_comments(database: str, publication: str | None = None) -> list[dict]:
 # ---------------------------------------------------------------------------
 # MotherDuck operations
 # ---------------------------------------------------------------------------
+
+def get_existing_comment_ids(conn: duckdb.DuckDBPyConnection) -> set[str]:
+    """Get set of comment_ids already in MotherDuck."""
+    try:
+        rows = conn.execute(
+            "SELECT DISTINCT comment_id FROM substack_comments"
+        ).fetchall()
+        return {r[0] for r in rows}
+    except Exception:
+        return set()
+
 
 def insert_comments(conn: duckdb.DuckDBPyConnection, rows: list[dict],
                     source_database: str, batch_size: int = 500):
@@ -236,6 +249,8 @@ def main():
                         help="PostgreSQL database (substack, podcasts, or both if omitted)")
     parser.add_argument("--publication", metavar="SUBDOMAIN",
                         help="Only upload comments from this publication")
+    parser.add_argument("--full", action="store_true",
+                        help="Full reload: drop and recreate table")
     parser.add_argument("--skip-embeddings", action="store_true",
                         help="Insert data only, skip embedding() call")
     parser.add_argument("--embed-only", action="store_true",
@@ -263,17 +278,40 @@ def main():
             all_data.append((rows, db))
             total_rows += len(rows)
 
-        print(f"\nTotal comments: {total_rows}")
+        print(f"\nTotal comments from PG: {total_rows}")
         if total_rows == 0:
             print("No data to upload.")
             return
 
-        # Create table
-        print("\nCreating substack_comments table...")
-        md.execute(CREATE_TABLE_SQL)
+        if args.full:
+            # Full reload: drop and recreate
+            print("\nFull reload: dropping and recreating substack_comments...")
+            md.execute("DROP TABLE IF EXISTS substack_comments")
+            md.execute(CREATE_TABLE_SQL)
+            new_data = all_data
+        else:
+            # Incremental: create table if not exists, filter out existing comments
+            md.execute(CREATE_TABLE_SQL)
+            existing = get_existing_comment_ids(md)
+            new_data = []
+            total_new = 0
+            for rows, db in all_data:
+                new_rows = [r for r in rows if str(r["comment_id"]) not in existing]
+                new_data.append((new_rows, db))
+                total_new += len(new_rows)
+            skipped = total_rows - total_new
+            print(f"  Already in MotherDuck: {len(existing)} comments ({skipped} skipped)")
+            print(f"  New comments to insert: {total_new}")
+
+            if total_new == 0:
+                print("Nothing new to insert.")
+                if not args.skip_embeddings:
+                    run_embeddings(md)
+                verify(md)
+                return
 
         # Insert
-        for rows, db in all_data:
+        for rows, db in new_data:
             if rows:
                 print(f"\nInserting comments from {db}...")
                 insert_comments(md, rows, source_database=db)
@@ -283,7 +321,7 @@ def main():
             print()
             run_embeddings(md)
 
-        # Create FTS index
+        # Recreate FTS index (covers all rows including new ones)
         create_fts_index(md, "substack_comments", "comment_id", ["body"])
 
         verify(md)

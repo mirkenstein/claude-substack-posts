@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """Upload chunked Substack posts to MotherDuck for semantic search.
 
-Uses MotherDuck's built-in embedding() function (OpenAI text-embedding-3-small, 512 dim)
-and array_cosine_similarity() for vector search.
+Default mode is incremental: only inserts new posts not already in MotherDuck.
+Embeddings are only generated for rows that don't have them yet.
 
 Usage:
-    python motherduck/upload_posts.py                           # load from both databases
+    python motherduck/upload_posts.py                           # incremental from both DBs
     python motherduck/upload_posts.py --database substack       # substack DB only
     python motherduck/upload_posts.py --database podcasts       # podcasts DB only
     python motherduck/upload_posts.py --publication edwardslavsquat  # one publication
+    python motherduck/upload_posts.py --full                    # drop and recreate (full reload)
     python motherduck/upload_posts.py --skip-embeddings         # insert only, no embedding()
     python motherduck/upload_posts.py --embed-only              # only run embedding update
 """
@@ -40,7 +41,7 @@ tokenizer = tiktoken.get_encoding("cl100k_base")
 MOTHERDUCK_DB = "md:my_db"
 
 CREATE_TABLE_SQL = """
-CREATE OR REPLACE TABLE substack_posts (
+CREATE TABLE IF NOT EXISTS substack_posts (
     chunk_id        VARCHAR,
     post_id         VARCHAR,
     title           VARCHAR,
@@ -225,6 +226,17 @@ def read_posts(database: str, publication: str | None = None) -> list[dict]:
 # MotherDuck operations
 # ---------------------------------------------------------------------------
 
+def get_existing_post_ids(conn: duckdb.DuckDBPyConnection) -> set[str]:
+    """Get set of post_ids already in MotherDuck."""
+    try:
+        rows = conn.execute(
+            "SELECT DISTINCT post_id FROM substack_posts"
+        ).fetchall()
+        return {r[0] for r in rows}
+    except Exception:
+        return set()
+
+
 def insert_chunks(conn: duckdb.DuckDBPyConnection, chunks: list[dict], batch_size: int = 500):
     """Batch insert chunks into substack_posts (without embeddings)."""
     if not chunks:
@@ -262,7 +274,6 @@ def insert_chunks(conn: duckdb.DuckDBPyConnection, chunks: list[dict], batch_siz
 
 def run_embeddings(conn: duckdb.DuckDBPyConnection):
     """Generate embeddings server-side using MotherDuck's embedding() function."""
-    # Count rows needing embeddings
     result = conn.execute(
         "SELECT count(*) FROM substack_posts WHERE content_embedding IS NULL"
     ).fetchone()
@@ -295,6 +306,8 @@ def main():
                         help="PostgreSQL database (substack, podcasts, or both if omitted)")
     parser.add_argument("--publication", metavar="SUBDOMAIN",
                         help="Only upload posts from this publication")
+    parser.add_argument("--full", action="store_true",
+                        help="Full reload: drop and recreate table")
     parser.add_argument("--skip-embeddings", action="store_true",
                         help="Insert data only, skip embedding() call")
     parser.add_argument("--embed-only", action="store_true",
@@ -302,7 +315,7 @@ def main():
     args = parser.parse_args()
 
     # Connect to MotherDuck
-    print(f"Connecting to MotherDuck...")
+    print("Connecting to MotherDuck...")
     md = duckdb.connect(MOTHERDUCK_DB)
 
     try:
@@ -324,28 +337,43 @@ def main():
             for row in rows:
                 all_chunks.extend(build_chunks(row, source_database=db))
 
-        print(f"\nTotal chunks: {len(all_chunks)}")
+        print(f"\nTotal chunks from PG: {len(all_chunks)}")
         if not all_chunks:
             print("No data to upload.")
             return
 
-        # Drop old table and create new one
-        print("\nDropping hua_bin_articles (if exists)...")
-        md.execute("DROP TABLE IF EXISTS hua_bin_articles")
+        if args.full:
+            # Full reload: drop and recreate
+            print("\nFull reload: dropping and recreating substack_posts...")
+            md.execute("DROP TABLE IF EXISTS substack_posts")
+            md.execute(CREATE_TABLE_SQL)
+            new_chunks = all_chunks
+        else:
+            # Incremental: create table if not exists, filter out existing posts
+            md.execute(CREATE_TABLE_SQL)
+            existing = get_existing_post_ids(md)
+            new_chunks = [c for c in all_chunks if c["post_id"] not in existing]
+            skipped_posts = len({c["post_id"] for c in all_chunks}) - len({c["post_id"] for c in new_chunks})
+            print(f"  Already in MotherDuck: {len(existing)} posts ({skipped_posts} skipped)")
+            print(f"  New chunks to insert: {len(new_chunks)}")
 
-        print("Creating substack_posts table...")
-        md.execute(CREATE_TABLE_SQL)
+        if not new_chunks:
+            print("Nothing new to insert.")
+            if not args.skip_embeddings:
+                run_embeddings(md)
+            verify(md)
+            return
 
         # Insert chunks
-        print("Inserting chunks...")
-        insert_chunks(md, all_chunks)
+        print("\nInserting chunks...")
+        insert_chunks(md, new_chunks)
 
         # Generate embeddings
         if not args.skip_embeddings:
             print()
             run_embeddings(md)
 
-        # Create FTS index
+        # Recreate FTS index (covers all rows including new ones)
         create_fts_index(md, "substack_posts", "chunk_id", ["content", "title", "subtitle"])
 
         verify(md)
@@ -359,7 +387,6 @@ def create_fts_index(conn: duckdb.DuckDBPyConnection, table: str,
     """Create a full-text search index using DuckDB's FTS extension."""
     cols_str = ", ".join(f"'{c}'" for c in text_cols)
 
-    # Drop existing FTS index if any (recreate on full reload)
     try:
         conn.execute(f"PRAGMA drop_fts_index('{table}')")
     except Exception:
