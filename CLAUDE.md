@@ -15,6 +15,7 @@ transcribe/                         # Transcription scripts and outputs
 weaviate/                           # Weaviate vector search (primary)
 weaviate/embedded.py                # Experimental: embedded Weaviate with Jina AI
 embedded_vectordb/                  # Experimental: LanceDB and ChromaDB with Jina AI
+motherduck/                         # MotherDuck SaaS DuckDB (experimental)
 twitter/                            # Twitter data ingestion (separate pipeline)
 src/                                # Core library code
 src/db/                             # Database connection and loader
@@ -268,3 +269,30 @@ Upload scripts: `weaviate/upload_posts.py`, `weaviate/upload_comments.py`, `weav
 **ChromaDB (experimental)** — `embedded_vectordb/chromadb/`. Persistent embedded client with Jina AI embeddings. Required a manual patch for Python 3.14 compatibility. Data persists to `~/.local/share/chromadb-substack/`.
 
 See `embedded_vectordb/README.md` for full comparison and usage.
+
+**MotherDuck (experimental)** — SaaS DuckDB with built-in `embedding()` (OpenAI `text-embedding-3-small`, 512 dim) and `array_cosine_similarity()`. Auth via `MOTHERDUCK_TOKEN` env var. Table: `substack_posts` in `my_db`.
+
+```bash
+python motherduck/upload_posts.py                           # load from both databases
+python motherduck/upload_posts.py --database substack       # substack DB only
+python motherduck/upload_posts.py --database podcasts       # podcasts DB only
+python motherduck/upload_posts.py --publication edwardslavsquat  # one publication
+python motherduck/upload_posts.py --skip-embeddings         # insert only, no embedding()
+python motherduck/upload_posts.py --embed-only              # only run embedding update
+```
+
+Tables: `substack_posts` (chunked post content), `substack_comments` (individual comments). Full reload each time (drops and recreates). Upload scripts: `motherduck/upload_posts.py`, `motherduck/upload_comments.py`.
+
+```bash
+python motherduck/upload_comments.py                           # load from both databases
+python motherduck/upload_comments.py --database substack       # substack DB only
+python motherduck/upload_comments.py --publication martyrmade  # one publication
+python motherduck/upload_comments.py --skip-embeddings         # insert only
+python motherduck/upload_comments.py --embed-only              # only run embedding update
+```
+
+Posts reuse chunking logic from `weaviate/upload_posts.py` (CHUNK_SIZE=700, OVERLAP=150). Semantic search example:
+```sql
+SELECT title, subdomain, array_cosine_similarity(embedding('search query'), content_embedding) AS score
+FROM substack_posts ORDER BY score DESC LIMIT 10;
+```
