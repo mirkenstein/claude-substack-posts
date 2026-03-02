@@ -11,6 +11,7 @@ Usage:
     python refresh_blog.py slavlandchronicles --delay 30 --jitter 4
     python refresh_blog.py slavlandchronicles --skip-weaviate
     python refresh_blog.py slavlandchronicles --dry-run
+    python refresh_blog.py martyrmade --database podcasts --cookies cookies.json
 """
 
 import argparse
@@ -105,10 +106,10 @@ def fetch_new_posts(
     return saved
 
 
-def load_into_postgres(files: list[Path], verbose: bool) -> int:
+def load_into_postgres(files: list[Path], database: str, verbose: bool) -> int:
     """Load new post JSON files into PostgreSQL."""
     loaded = 0
-    with DatabaseConnection() as conn:
+    with DatabaseConnection(database=database) as conn:
         loader = PostLoader(conn)
         for fp in files:
             try:
@@ -136,12 +137,12 @@ def load_into_postgres(files: list[Path], verbose: bool) -> int:
     return loaded
 
 
-def upload_to_weaviate(subdomain: str) -> None:
+def upload_to_weaviate(subdomain: str, database: str) -> None:
     """Upload new posts to Weaviate."""
     sys.path.insert(0, str(Path(__file__).parent / "weaviate"))
     from upload_posts import main as weaviate_main
 
-    sys.argv = ["upload_posts.py", "--publication", subdomain]
+    sys.argv = ["upload_posts.py", "--publication", subdomain, "--database", database]
     weaviate_main()
 
 
@@ -154,6 +155,8 @@ def main():
                         help="Delay between fetches in seconds (default: 30)")
     parser.add_argument("--jitter", type=float, default=4.0,
                         help="Random jitter added to delay (default: 4)")
+    parser.add_argument("--database", default="substack",
+                        help="PostgreSQL database (default: substack)")
     parser.add_argument("--cookies", help="Path to cookies JSON for authenticated access")
     parser.add_argument("--skip-weaviate", action="store_true", help="Skip Weaviate upload")
     parser.add_argument("--dry-run", action="store_true", help="Show what would be done")
@@ -213,15 +216,15 @@ def main():
     print(f"Fetched: {len(saved)} files")
 
     # Step 7: Load into PostgreSQL
-    print(f"\nLoading into PostgreSQL...")
-    loaded = load_into_postgres(saved, args.verbose)
+    print(f"\nLoading into PostgreSQL ({args.database})...")
+    loaded = load_into_postgres(saved, args.database, args.verbose)
     print(f"Loaded: {loaded} posts")
 
     # Step 8: Weaviate
     if not args.skip_weaviate:
         print(f"\nUploading to Weaviate...")
         try:
-            upload_to_weaviate(subdomain)
+            upload_to_weaviate(subdomain, args.database)
         except Exception as e:
             print(f"Weaviate error: {e}", file=sys.stderr)
 
