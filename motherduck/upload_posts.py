@@ -42,7 +42,7 @@ MOTHERDUCK_DB = "md:my_db"
 
 CREATE_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS substack_posts (
-    chunk_id        VARCHAR,
+    chunk_id        BIGINT,
     post_id         VARCHAR,
     title           VARCHAR,
     subtitle        VARCHAR,
@@ -256,7 +256,7 @@ def insert_chunks(conn: duckdb.DuckDBPyConnection, chunks: list[dict], batch_siz
         batch = chunks[i:i + batch_size]
         values = [
             (
-                f"{c['post_id']}-{c['chunk_number']}",
+                int(f"{c['post_id']}{c['chunk_number']:02d}"),
                 c["post_id"], c["title"], c["subtitle"], c["slug"],
                 c["canonical_url"], c["post_date"],
                 c["audience"], c["word_count"], c["comment_count"], c["restacks"],

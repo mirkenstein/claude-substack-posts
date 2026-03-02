@@ -120,10 +120,13 @@ def chunk_by_tokens(text: str) -> list[str]:
 # Collection creation
 # ---------------------------------------------------------------------------
 
-def create_collection(client, collection_name):
+def create_collection(client, collection_name, recreate=False):
     """Create chapter-aware video chunk collection with JinaAI v3 vectorizer."""
     if client.collections.exists(collection_name):
-        resp = input(f"{collection_name} exists. Delete and recreate? (yes/no): ")
+        if recreate:
+            resp = "yes"
+        else:
+            resp = input(f"{collection_name} exists. Delete and recreate? (yes/no): ")
         if resp.lower() == "yes":
             client.collections.delete(collection_name)
             print(f"  Deleted {collection_name}")
@@ -477,6 +480,8 @@ def main():
                         help="Only create collection, don't upload")
     parser.add_argument("--since", metavar="TIMESTAMP",
                         help="Upload videos with segments added after this timestamp")
+    parser.add_argument("--recreate", action="store_true",
+                        help="Delete and recreate collection without prompting")
     parser.add_argument("--database", default="podcasts",
                         help="PostgreSQL database (default: podcasts)")
     args = parser.parse_args()
@@ -491,7 +496,7 @@ def main():
         print(f"Connected to Weaviate (ready: {client.is_ready()})")
 
         if not args.upload_only:
-            create_collection(client, collection_name)
+            create_collection(client, collection_name, recreate=args.recreate)
 
         if args.create_only:
             return
