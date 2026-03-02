@@ -3,10 +3,14 @@
 ## Setup
 https://huabinoliver.substack.com/
 ```bash
-export BLOG=huabinoliver   # subdomain from https://<subdomain>.substack.com
+export BLOG=eventsinukraine   # subdomain from https://<subdomain>.substack.com
+```
+```shell
+for BLOG in "eventsinukraine" "drlivci" "kamilkazani" "slavlandchronicles" "huabinoliver" "iurierosca";
+do python refresh_blog.py $BLOG --cookies cookies.json; 
+done
 ```
 
----
 
 ## Initial Ingest (first time)
 
@@ -30,12 +34,14 @@ Re-run with `--resume` to pick up where you left off if interrupted.
 
 ```bash
 python load_posts.py --dir posts/${BLOG}/ --resume --log etl_${BLOG}.log -v
+# For non-default database:
+# python load_posts.py --dir posts/${BLOG}/ --resume --log etl_${BLOG}.log --database podcasts -v
 ```
 
 ### Step 4: Upload to Weaviate and ChromaDB
 
 ```bash
-# Weaviate
+# Weaviate (add --database podcasts for non-default DB)
 python weaviate/upload_posts.py --publication ${BLOG}
 python weaviate/upload_comments.py --publication ${BLOG}
 
@@ -106,6 +112,7 @@ This stores speaker turns in `transcript_lines`, updates `posts.content_html` wi
 ### Verify
 
 ```bash
+# Add database='podcasts' to DatabaseConnection() for non-default DB
 python3 -c "
 from src.db.connection import DatabaseConnection
 db = DatabaseConnection()
@@ -132,6 +139,9 @@ Check for new posts and ingest only what's new:
 
 ```bash
 python refresh_blog.py ${BLOG}
+
+# For blogs in the podcasts database:
+python refresh_blog.py ${BLOG} --database podcasts --cookies cookies.json
 ```
 
 Check more than the default 10 latest posts:
@@ -163,6 +173,8 @@ For paid content:
 ```bash
 python refresh_blog.py ${BLOG} --cookies cookies.json
 ```
+
+The `--database` flag threads through to both PostgreSQL loading and Weaviate upload.
 
 The script archives the old post list as `{blog}_posts.{timestamp}.json` before updating.
 
@@ -197,6 +209,7 @@ python main.py --from-list posts/${BLOG}/${BLOG}_posts.json \
     --output-dir posts/${BLOG}/ --last 5 --delay 30 --jitter 4 --cookies cookies.json -v
 
 # 2. Reload those 5 into Postgres (--last picks by mtime, bypasses --resume)
+#    Add --database podcasts for non-default DB
 python load_posts.py --dir posts/${BLOG}/ --resume --last 5 -v
 
 # 3. Extract and download any new media from refreshed posts
