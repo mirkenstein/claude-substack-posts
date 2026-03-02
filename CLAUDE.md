@@ -282,7 +282,7 @@ python motherduck/upload_posts.py --skip-embeddings         # insert only, no em
 python motherduck/upload_posts.py --embed-only              # only run embedding update
 ```
 
-Tables: `substack_posts` (chunked post content), `substack_comments` (individual comments). Default is incremental (dedup by post_id/comment_id, embed only new rows). Use `--full` to drop and recreate. Upload scripts: `motherduck/upload_posts.py`, `motherduck/upload_comments.py`.
+Tables: `substack_posts` (chunked post content), `substack_comments` (individual comments), `youtube_transcript_chunks` (fixed-window transcript chunks). Default is incremental for posts/comments (dedup by post_id/comment_id, embed only new rows). Use `--full` to drop and recreate. Upload scripts: `motherduck/upload_posts.py`, `motherduck/upload_comments.py`, `motherduck/upload_video_chapters.py`, `motherduck/upload_video_transcripts.py`.
 
 ```bash
 python motherduck/upload_comments.py                           # incremental (new comments only)
@@ -303,7 +303,16 @@ python motherduck/upload_video_chapters.py --skip-embeddings   # insert only
 python motherduck/upload_video_chapters.py --embed-only        # only run embeddings
 ```
 
-Posts reuse chunking logic from `weaviate/upload_posts.py` (CHUNK_SIZE=700, OVERLAP=150). All tables have FTS indexes (BM25) and vector embeddings (OpenAI `text-embedding-3-small`, 512 dim). Semantic search example:
+Fixed-window YouTube transcript chunks from `podcasts` database: `motherduck/upload_video_transcripts.py`. Mirrors `weaviate/upload_videos.py` — chunks full transcripts with 1000-token windows, 250-token overlap. Table: `youtube_transcript_chunks` (~19,700 chunks from ~834 videos). Full reload each run.
+
+```bash
+python motherduck/upload_video_transcripts.py                         # full reload (default: podcasts DB)
+python motherduck/upload_video_transcripts.py --database podcasts     # explicit DB
+python motherduck/upload_video_transcripts.py --skip-embeddings       # insert only
+python motherduck/upload_video_transcripts.py --embed-only            # only run embeddings
+```
+
+Posts reuse chunking logic from `weaviate/upload_posts.py` (CHUNK_SIZE=700, OVERLAP=150). All tables have FTS indexes (BM25) and vector embeddings (OpenAI `text-embedding-3-small`, 512 dim). FTS keys must be integer-castable (`BIGINT`) for `match_bm25()`. Semantic search example:
 ```sql
 SELECT title, subdomain, array_cosine_similarity(embedding('search query'), content_embedding) AS score
 FROM substack_posts ORDER BY score DESC LIMIT 10;
