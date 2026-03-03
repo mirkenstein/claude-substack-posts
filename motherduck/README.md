@@ -17,9 +17,9 @@ pip install duckdb tiktoken
 |-------|------|--------|-------------|
 | `substack_posts` | ~8,475 chunks | substack + podcasts DBs | Chunked blog post content |
 | `substack_comments` | ~83,000 | substack + podcasts DBs | Individual comments |
-| `youtube_videos` | ~281 | podcasts DB | One row per video (catalog) |
-| `youtube_chapters` | ~3,400 | podcasts DB | One row per chapter (chapter-aware) |
-| `youtube_transcript_chunks` | ~19,700 | podcasts DB | Fixed-window transcript chunks |
+| `youtube_videos` | ~282 | podcasts + substack DBs | One row per video (catalog) |
+| `youtube_chapters` | ~3,409 | podcasts + substack DBs | One row per chapter (chapter-aware) |
+| `youtube_transcript_chunks` | ~29,265 | podcasts + substack DBs | Fixed-window transcript chunks |
 
 ## Scripts
 
@@ -59,11 +59,12 @@ python motherduck/upload_comments.py --embed-only
 
 ### upload_video_chapters.py
 
-Two-table design for YouTube video catalog and chapter-aware transcript chunks. Mirrors `weaviate/upload_videos_chapters.py`. Full reload each run (CREATE OR REPLACE).
+Two-table design for YouTube video catalog and chapter-aware transcript chunks. Mirrors `weaviate/upload_videos_chapters.py`. Loads from both `podcasts` and `substack` databases by default. Full reload each run (CREATE OR REPLACE).
 
 ```bash
-python motherduck/upload_video_chapters.py                         # full reload
-python motherduck/upload_video_chapters.py --database podcasts     # explicit DB
+python motherduck/upload_video_chapters.py                         # full reload from both DBs
+python motherduck/upload_video_chapters.py --database podcasts     # podcasts DB only
+python motherduck/upload_video_chapters.py --database substack     # substack DB only
 python motherduck/upload_video_chapters.py --skip-embeddings
 python motherduck/upload_video_chapters.py --embed-only
 ```
@@ -74,11 +75,13 @@ python motherduck/upload_video_chapters.py --embed-only
 
 ### upload_video_transcripts.py
 
-Fixed-window transcript chunks (1000 tokens, 250 overlap). Mirrors `weaviate/upload_videos.py`. Full reload each run.
+Fixed-window transcript chunks (1000 tokens, 250 overlap). Mirrors `weaviate/upload_videos.py`. Loads from both `podcasts` and `substack` databases by default. Default incremental (dedup by video_id), `--full` for drop+recreate.
 
 ```bash
-python motherduck/upload_video_transcripts.py                         # full reload
-python motherduck/upload_video_transcripts.py --database podcasts     # explicit DB
+python motherduck/upload_video_transcripts.py                         # incremental from both DBs
+python motherduck/upload_video_transcripts.py --database podcasts     # podcasts DB only
+python motherduck/upload_video_transcripts.py --database substack     # substack DB only
+python motherduck/upload_video_transcripts.py --full                  # drop and recreate
 python motherduck/upload_video_transcripts.py --skip-embeddings
 python motherduck/upload_video_transcripts.py --embed-only
 ```

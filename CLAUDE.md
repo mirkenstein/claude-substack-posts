@@ -257,6 +257,7 @@ Collections:
 - `VideoChunkEngRu` — YouTube transcript chunks, JinaAI v3 `jina-embeddings-v3` (1024 dim), JinaAI reranker
 - `VideoChunkSC` — YouTube transcript chunks for surgical_compass database, JinaAI v3
 - `VideoChapterChunkPodcasts` — chapter-aware YouTube transcript chunks for podcasts database, JinaAI v3 (see below)
+- `VideoChapterChunkSubstack` — chapter-aware YouTube transcript chunks for substack database, JinaAI v3
 - `ExternalArticleEngRu` — external article chunks, JinaAI v3, watermark-based incremental uploads
 - `ExternalCommentEngRu` — external comment bundles (grouped by article), JinaAI v3
 
@@ -293,21 +294,25 @@ python motherduck/upload_comments.py --skip-embeddings         # insert only
 python motherduck/upload_comments.py --embed-only              # only run embedding update
 ```
 
-YouTube video chapters from the `podcasts` PostgreSQL database: `motherduck/upload_video_chapters.py`. Two tables for catalog browsing and semantic search:
-- `youtube_videos` — one row per video (281 rows), description embedded
-- `youtube_chapters` — one row per chapter (3,384 rows), transcript embedded. Videos without chapters get a single "Full Transcript" row.
+YouTube video chapters from both `podcasts` and `substack` databases: `motherduck/upload_video_chapters.py`. Two tables for catalog browsing and semantic search:
+- `youtube_videos` — one row per video (~282 rows), description embedded
+- `youtube_chapters` — one row per chapter (~3,409 rows), transcript embedded. Videos without chapters get a single "Full Transcript" row.
 
 ```bash
-python motherduck/upload_video_chapters.py                     # full reload (default: podcasts DB)
-python motherduck/upload_video_chapters.py --skip-embeddings   # insert only
-python motherduck/upload_video_chapters.py --embed-only        # only run embeddings
+python motherduck/upload_video_chapters.py                         # full reload from both DBs
+python motherduck/upload_video_chapters.py --database podcasts     # podcasts DB only
+python motherduck/upload_video_chapters.py --database substack     # substack DB only
+python motherduck/upload_video_chapters.py --skip-embeddings       # insert only
+python motherduck/upload_video_chapters.py --embed-only            # only run embeddings
 ```
 
-Fixed-window YouTube transcript chunks from `podcasts` database: `motherduck/upload_video_transcripts.py`. Mirrors `weaviate/upload_videos.py` — chunks full transcripts with 1000-token windows, 250-token overlap. Table: `youtube_transcript_chunks` (~19,700 chunks from ~834 videos). Full reload each run.
+Fixed-window YouTube transcript chunks from both databases: `motherduck/upload_video_transcripts.py`. Mirrors `weaviate/upload_videos.py` — chunks full transcripts with 1000-token windows, 250-token overlap. Table: `youtube_transcript_chunks` (~29,265 chunks from ~983 videos). Default incremental (dedup by video_id), `--full` for drop+recreate.
 
 ```bash
-python motherduck/upload_video_transcripts.py                         # full reload (default: podcasts DB)
-python motherduck/upload_video_transcripts.py --database podcasts     # explicit DB
+python motherduck/upload_video_transcripts.py                         # incremental from both DBs
+python motherduck/upload_video_transcripts.py --database podcasts     # podcasts DB only
+python motherduck/upload_video_transcripts.py --database substack     # substack DB only
+python motherduck/upload_video_transcripts.py --full                  # drop and recreate
 python motherduck/upload_video_transcripts.py --skip-embeddings       # insert only
 python motherduck/upload_video_transcripts.py --embed-only            # only run embeddings
 ```
