@@ -6,8 +6,10 @@ youtube.video_transcripts, chunks by token window (1000/250 overlap),
 and uploads to a youtube_transcript_chunks table.
 
 Usage:
-    python motherduck/upload_video_transcripts.py                         # full reload
-    python motherduck/upload_video_transcripts.py --database podcasts     # explicit DB
+    python motherduck/upload_video_transcripts.py                         # incremental from both DBs
+            python motherduck/upload_video_transcripts.py --database podcasts     # podcasts DB only
+    python motherduck/upload_video_transcripts.py --database substack     # substack DB only
+    python motherduck/upload_video_transcripts.py --full                  # drop and recreate
     python motherduck/upload_video_transcripts.py --skip-embeddings       # insert only
     python motherduck/upload_video_transcripts.py --embed-only            # only run embeddings
 """
@@ -103,6 +105,7 @@ def build_chunks(video: dict) -> list[dict]:
         "video_url": video["url"] or "",
         "upload_date": video["upload_date"],
         "playlist_name": video["playlist_name"] or "",
+        "source_database": video.get("source_database", ""),
     }
 
     text_chunks = chunk_by_tokens(text)
@@ -132,7 +135,7 @@ def build_chunks(video: dict) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 CREATE_TABLE_SQL = """
-CREATE OR REPLACE TABLE youtube_transcript_chunks (
+CREATE TABLE IF NOT EXISTS youtube_transcript_chunks (
     row_id              BIGINT,
     video_id            VARCHAR,
     video_title         VARCHAR,
@@ -141,6 +144,7 @@ CREATE OR REPLACE TABLE youtube_transcript_chunks (
     video_url           VARCHAR,
     upload_date         DATE,
     playlist_name       VARCHAR,
+    source_database     VARCHAR,
     transcript          VARCHAR,
     chunk_number        INTEGER,
     total_chunks        INTEGER,
@@ -159,9 +163,9 @@ def insert_chunks(conn: duckdb.DuckDBPyConnection, chunks: list[dict],
     insert_sql = """
     INSERT INTO youtube_transcript_chunks (
         row_id, video_id, video_title, description, channel_name,
-        video_url, upload_date, playlist_name,
+        video_url, upload_date, playlist_name, source_database,
         transcript, chunk_number, total_chunks, chunk_tokens
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
     start = time.time()
     for i in range(0, len(chunks), batch_size):
@@ -171,7 +175,7 @@ def insert_chunks(conn: duckdb.DuckDBPyConnection, chunks: list[dict],
                 c["row_id"],
                 c["video_id"], c["video_title"], c["description"],
                 c["channel_name"], c["video_url"], c["upload_date"],
-                c["playlist_name"],
+                c["playlist_name"], c["source_database"],
                 c["transcript"], c["chunk_number"],
                 c["total_chunks"], c["chunk_tokens"],
             )
@@ -252,26 +256,49 @@ def verify(conn: duckdb.DuckDBPyConnection):
     print(f"  With embeddings: {result[0]}")
 
     result = conn.execute("""
-        SELECT channel_name, count(DISTINCT video_id) AS videos, count(*) AS chunks
+        SELECT source_database, channel_name,
+               count(DISTINCT video_id) AS videos, count(*) AS chunks
         FROM youtube_transcript_chunks
-        GROUP BY channel_name
-        ORDER BY videos DESC
+        GROUP BY source_database, channel_name
+        ORDER BY source_database, videos DESC
     """).fetchall()
-    print("  By channel:")
+    print("  By database/channel:")
     for row in result:
-        print(f"    {row[0]}: {row[1]} videos, {row[2]} chunks")
+        print(f"    [{row[0]}] {row[1]}: {row[2]} videos, {row[3]} chunks")
 
 
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
+def get_existing_video_ids(conn: duckdb.DuckDBPyConnection) -> set:
+    try:
+        rows = conn.execute(
+            "SELECT DISTINCT video_id FROM youtube_transcript_chunks"
+        ).fetchall()
+        return {r[0] for r in rows}
+    except Exception:
+        return set()
+
+
+def get_max_row_id(conn: duckdb.DuckDBPyConnection) -> int:
+    try:
+        result = conn.execute(
+            "SELECT COALESCE(MAX(row_id), 0) FROM youtube_transcript_chunks"
+        ).fetchone()
+        return result[0]
+    except Exception:
+        return 0
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Upload chunked YouTube video transcripts to MotherDuck"
     )
-    parser.add_argument("--database", default="podcasts",
-                        help="PostgreSQL database (default: podcasts)")
+    parser.add_argument("--database",
+                        help="PostgreSQL database (substack, podcasts, or both if omitted)")
+    parser.add_argument("--full", action="store_true",
+                        help="Full reload: drop and recreate table")
     parser.add_argument("--skip-embeddings", action="store_true",
                         help="Insert data only, skip embedding() call")
     parser.add_argument("--embed-only", action="store_true",
@@ -287,45 +314,66 @@ def main():
             verify(md)
             return
 
-        database = args.database
+        databases = [args.database] if args.database else ["podcasts", "substack"]
 
-        print(f"\nReading transcripts from PostgreSQL ({database})...")
-        with DatabaseConnection(database=database, schema="youtube") as conn:
-            with conn.cursor() as cur:
-                cur.execute(VIDEOS_QUERY)
-                columns = [desc[0] for desc in cur.description]
-                rows = [dict(zip(columns, r)) for r in cur.fetchall()]
-        print(f"  {len(rows)} videos with transcripts")
+        # Read and chunk from each database
+        all_chunks = []
+        for db in databases:
+            print(f"\nReading transcripts from PostgreSQL ({db})...")
+            with DatabaseConnection(database=db, schema="youtube") as conn:
+                with conn.cursor() as cur:
+                    cur.execute(VIDEOS_QUERY)
+                    columns = [desc[0] for desc in cur.description]
+                    rows = [dict(zip(columns, r)) for r in cur.fetchall()]
+            print(f"  {len(rows)} videos with transcripts")
 
-        if not rows:
+            for row in rows:
+                row["source_database"] = db
+                all_chunks.extend(build_chunks(row))
+
+        print(f"\nTotal chunks from PG: {len(all_chunks)}")
+        if not all_chunks:
             print("No data to upload.")
             return
 
-        # Chunk all transcripts
-        print("\nChunking transcripts...")
-        all_chunks = []
-        for row in rows:
-            chunks = build_chunks(row)
-            all_chunks.extend(chunks)
-        print(f"  {len(all_chunks)} chunks from {len(rows)} videos")
+        if args.full:
+            # Full reload: drop and recreate
+            print("\nFull reload: dropping and recreating youtube_transcript_chunks...")
+            md.execute("DROP TABLE IF EXISTS youtube_transcript_chunks")
+            md.execute(CREATE_TABLE_SQL)
+            new_chunks = all_chunks
+            start_id = 1
+        else:
+            # Incremental: create table if not exists, filter out existing videos
+            md.execute(CREATE_TABLE_SQL)
+            existing = get_existing_video_ids(md)
+            new_chunks = [c for c in all_chunks if c["video_id"] not in existing]
+            skipped = len({c["video_id"] for c in all_chunks}) - len({c["video_id"] for c in new_chunks})
+            print(f"  Already in MotherDuck: {len(existing)} videos ({skipped} skipped)")
+            print(f"  New chunks to insert: {len(new_chunks)}")
+            start_id = get_max_row_id(md) + 1
+
+        if not new_chunks:
+            print("Nothing new to insert.")
+            if not args.skip_embeddings:
+                run_embeddings(md)
+            verify(md)
+            return
 
         # Assign sequential row_id (BIGINT for FTS)
-        for i, c in enumerate(all_chunks, start=1):
+        for i, c in enumerate(new_chunks, start=start_id):
             c["row_id"] = i
 
-        # Create table and insert
-        print("\nCreating MotherDuck table...")
-        md.execute(CREATE_TABLE_SQL)
-
+        # Insert chunks
         print("\nInserting chunks...")
-        insert_chunks(md, all_chunks)
+        insert_chunks(md, new_chunks)
 
         # Embeddings
         if not args.skip_embeddings:
             print()
             run_embeddings(md)
 
-        # FTS
+        # FTS (recreate over all rows)
         print()
         create_fts_index(md)
 

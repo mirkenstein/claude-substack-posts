@@ -27,7 +27,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.db.connection import DatabaseConnection
 
 sys.path.insert(0, str(Path(__file__).parent))
-from config import get_client, VIDEO_CHAPTER_PODCASTS_COLLECTION
+from config import get_client, VIDEO_CHAPTER_PODCASTS_COLLECTION, VIDEO_CHAPTER_SUBSTACK_COLLECTION
 
 from weaviate.classes.config import Configure, Property, DataType
 
@@ -487,7 +487,14 @@ def main():
     args = parser.parse_args()
 
     database = args.database
-    collection_name = VIDEO_CHAPTER_PODCASTS_COLLECTION
+    COLLECTION_MAP = {
+        "podcasts": VIDEO_CHAPTER_PODCASTS_COLLECTION,
+        "substack": VIDEO_CHAPTER_SUBSTACK_COLLECTION,
+    }
+    collection_name = COLLECTION_MAP.get(database)
+    if not collection_name:
+        print(f"ERROR: No chapter collection configured for database '{database}'", file=sys.stderr)
+        sys.exit(1)
 
     print(f"Database: {database} → Collection: {collection_name}")
 

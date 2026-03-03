@@ -2,14 +2,15 @@
 """Upload YouTube videos and chapters to MotherDuck for catalog browsing and semantic search.
 
 Two tables:
-  - youtube_videos:   one row per video (281 rows), embed description
-  - youtube_chapters: one row per chapter (3,349 rows), embed transcript
+  - youtube_videos:   one row per video, embed description
+  - youtube_chapters: one row per chapter, embed transcript
 
 Videos without chapters get a single youtube_chapters row with full transcript.
 
 Usage:
-    python motherduck/upload_video_chapters.py                         # full reload
-    python motherduck/upload_video_chapters.py --database podcasts     # explicit DB
+    python motherduck/upload_video_chapters.py                         # full reload from both DBs
+    python motherduck/upload_video_chapters.py --database podcasts     # podcasts DB only
+    python motherduck/upload_video_chapters.py --database substack     # substack DB only
     python motherduck/upload_video_chapters.py --skip-embeddings       # insert only
     python motherduck/upload_video_chapters.py --embed-only            # only run embeddings
 """
@@ -170,6 +171,7 @@ def build_chapter_rows(video: dict, segments: list[dict],
             "chapter_number": entry["position"],
             "chapter_title": entry["title"],
             "start_seconds": entry["start_seconds"],
+            "source_database": video.get("source_database", ""),
             "transcript": text,
             "transcript_tokens": count_tokens(text),
         })
@@ -186,6 +188,7 @@ def build_full_transcript_row(video: dict, segments: list[dict]) -> dict | None:
         "chapter_number": 0,
         "chapter_title": "Full Transcript",
         "start_seconds": 0,
+        "source_database": video.get("source_database", ""),
         "transcript": text,
         "transcript_tokens": count_tokens(text),
     }
@@ -204,6 +207,7 @@ CREATE OR REPLACE TABLE youtube_videos (
     url             VARCHAR,
     upload_date     DATE,
     playlist_name   VARCHAR,
+    source_database VARCHAR,
     chapter_count   INTEGER,
     has_chapters    BOOLEAN,
     description_embedding FLOAT[512]
@@ -216,6 +220,7 @@ CREATE OR REPLACE TABLE youtube_chapters (
     chapter_number      INTEGER,
     chapter_title       VARCHAR,
     start_seconds       INTEGER,
+    source_database     VARCHAR,
     transcript          VARCHAR,
     transcript_tokens   INTEGER,
     transcript_embedding FLOAT[512]
@@ -232,14 +237,15 @@ def insert_videos(conn: duckdb.DuckDBPyConnection, videos: list[dict],
     insert_sql = """
     INSERT INTO youtube_videos (
         video_id, title, description, channel_name, url,
-        upload_date, playlist_name, chapter_count, has_chapters
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        upload_date, playlist_name, source_database, chapter_count, has_chapters
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
     values = [
         (
             v["video_id"], v["title"] or "", v["description"] or "",
             v["channel_name"] or "", v["url"] or "",
             v["upload_date"], v["playlist_name"] or "",
+            v.get("source_database", ""),
             chapter_counts.get(v["video_id"], 0),
             chapter_counts.get(v["video_id"], 0) > 0,
         )
@@ -254,8 +260,8 @@ def insert_chapters(conn: duckdb.DuckDBPyConnection, chapters: list[dict],
     insert_sql = """
     INSERT INTO youtube_chapters (
         video_id, chapter_number, chapter_title, start_seconds,
-        transcript, transcript_tokens
-    ) VALUES (?, ?, ?, ?, ?, ?)
+        source_database, transcript, transcript_tokens
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
     """
     start = time.time()
     for i in range(0, len(chapters), batch_size):
@@ -263,7 +269,8 @@ def insert_chapters(conn: duckdb.DuckDBPyConnection, chapters: list[dict],
         values = [
             (
                 c["video_id"], c["chapter_number"], c["chapter_title"],
-                c["start_seconds"], c["transcript"], c["transcript_tokens"],
+                c["start_seconds"], c.get("source_database", ""),
+                c["transcript"], c["transcript_tokens"],
             )
             for c in batch
         ]
@@ -379,19 +386,20 @@ def verify(conn: duckdb.DuckDBPyConnection):
         print(f"  {label}: {row[1]} videos")
 
     result = conn.execute("""
-        SELECT channel_name, count(*) AS videos,
+        SELECT source_database, channel_name, count(*) AS videos,
                (SELECT count(*) FROM youtube_chapters yc
                 WHERE yc.video_id IN (
                     SELECT video_id FROM youtube_videos yv2
                     WHERE yv2.channel_name = yv.channel_name
+                    AND yv2.source_database = yv.source_database
                 )) AS chapters
         FROM youtube_videos yv
-        GROUP BY channel_name
-        ORDER BY videos DESC
+        GROUP BY source_database, channel_name
+        ORDER BY source_database, videos DESC
     """).fetchall()
-    print("  By channel:")
+    print("  By database/channel:")
     for row in result:
-        print(f"    {row[0]}: {row[1]} videos, {row[2]} chapters")
+        print(f"    [{row[0]}] {row[1]}: {row[2]} videos, {row[3]} chapters")
 
 
 # ---------------------------------------------------------------------------
@@ -402,8 +410,8 @@ def main():
     parser = argparse.ArgumentParser(
         description="Upload YouTube videos and chapters to MotherDuck"
     )
-    parser.add_argument("--database", default="podcasts",
-                        help="PostgreSQL database (default: podcasts)")
+    parser.add_argument("--database",
+                        help="PostgreSQL database (podcasts, substack, or both if omitted)")
     parser.add_argument("--skip-embeddings", action="store_true",
                         help="Insert data only, skip embedding() call")
     parser.add_argument("--embed-only", action="store_true",
@@ -419,76 +427,89 @@ def main():
             verify(md)
             return
 
-        database = args.database
+        databases = [args.database] if args.database else ["podcasts", "substack"]
 
-        # Read all videos from PostgreSQL
-        print(f"\nReading videos from PostgreSQL ({database})...")
-        with DatabaseConnection(database=database, schema="youtube") as conn:
-            with conn.cursor() as cur:
-                cur.execute(ALL_VIDEOS_QUERY)
-                columns = [desc[0] for desc in cur.description]
-                videos = [dict(zip(columns, r)) for r in cur.fetchall()]
-            print(f"  {len(videos)} videos")
+        all_videos = []
+        all_chapter_rows = []
+        chapter_counts = {}
+        total_chapter_videos = 0
+        total_fixed_videos = 0
 
-            # Populate chapters for videos that need it
-            print("\nPopulating video chapters from descriptions...")
-            with conn.cursor() as cur:
-                cur.execute(VIDEOS_WITHOUT_CHAPTERS_QUERY)
-                videos_needing_chapters = {r[0] for r in cur.fetchall()}
+        for database in databases:
+            print(f"\nReading videos from PostgreSQL ({database})...")
+            with DatabaseConnection(database=database, schema="youtube") as conn:
+                with conn.cursor() as cur:
+                    cur.execute(ALL_VIDEOS_QUERY)
+                    columns = [desc[0] for desc in cur.description]
+                    videos = [dict(zip(columns, r)) for r in cur.fetchall()]
 
-            chapters_populated = 0
-            for video in videos:
-                vid = video["video_id"]
-                if vid in videos_needing_chapters:
-                    chapters = parse_chapters_from_description(
-                        video.get("description") or ""
-                    )
+                for v in videos:
+                    v["source_database"] = database
+                print(f"  {len(videos)} videos")
+
+                # Populate chapters for videos that need it
+                print(f"  Populating video chapters from descriptions...")
+                with conn.cursor() as cur:
+                    cur.execute(VIDEOS_WITHOUT_CHAPTERS_QUERY)
+                    videos_needing_chapters = {r[0] for r in cur.fetchall()}
+
+                chapters_populated = 0
+                for video in videos:
+                    vid = video["video_id"]
+                    if vid in videos_needing_chapters:
+                        chapters = parse_chapters_from_description(
+                            video.get("description") or ""
+                        )
+                        if chapters:
+                            populate_video_chapters(conn, vid, chapters)
+                            chapters_populated += 1
+                print(f"  Populated chapters for {chapters_populated} videos")
+
+                # Build chapter rows for each video
+                print(f"  Building chapter rows...")
+                chapter_videos = 0
+                fixed_videos = 0
+
+                for video in videos:
+                    vid = video["video_id"]
+
+                    with conn.cursor() as cur:
+                        cur.execute(SEGMENTS_QUERY, (vid,))
+                        seg_cols = [desc[0] for desc in cur.description]
+                        segments = [dict(zip(seg_cols, r)) for r in cur.fetchall()]
+
+                    if not segments:
+                        chapter_counts[vid] = 0
+                        continue
+
+                    with conn.cursor() as cur:
+                        cur.execute(CHAPTERS_QUERY, (vid,))
+                        ch_cols = [desc[0] for desc in cur.description]
+                        chapters = [dict(zip(ch_cols, r)) for r in cur.fetchall()]
+
+                    title_preview = (video["title"] or "")[:50]
                     if chapters:
-                        populate_video_chapters(conn, vid, chapters)
-                        chapters_populated += 1
-            print(f"  Populated chapters for {chapters_populated} videos")
+                        rows = build_chapter_rows(video, segments, chapters)
+                        chapter_counts[vid] = len(rows)
+                        chapter_videos += 1
+                        print(f"  {vid} | \"{title_preview}\" | {len(chapters)} chapters → {len(rows)} rows")
+                    else:
+                        row = build_full_transcript_row(video, segments)
+                        rows = [row] if row else []
+                        chapter_counts[vid] = 0
+                        fixed_videos += 1
+                        print(f"  {vid} | \"{title_preview}\" | full transcript → 1 row")
 
-            # Build chapter rows for each video
-            print("\nBuilding chapter rows...")
-            all_chapter_rows = []
-            chapter_counts = {}
-            chapter_videos = 0
-            fixed_videos = 0
+                    all_chapter_rows.extend(rows)
 
-            for video in videos:
-                vid = video["video_id"]
+                all_videos.extend(videos)
+                total_chapter_videos += chapter_videos
+                total_fixed_videos += fixed_videos
+                print(f"  [{database}] {len(videos)} videos ({chapter_videos} with chapters, {fixed_videos} full transcript)")
 
-                with conn.cursor() as cur:
-                    cur.execute(SEGMENTS_QUERY, (vid,))
-                    seg_cols = [desc[0] for desc in cur.description]
-                    segments = [dict(zip(seg_cols, r)) for r in cur.fetchall()]
-
-                if not segments:
-                    chapter_counts[vid] = 0
-                    continue
-
-                with conn.cursor() as cur:
-                    cur.execute(CHAPTERS_QUERY, (vid,))
-                    ch_cols = [desc[0] for desc in cur.description]
-                    chapters = [dict(zip(ch_cols, r)) for r in cur.fetchall()]
-
-                title_preview = (video["title"] or "")[:50]
-                if chapters:
-                    rows = build_chapter_rows(video, segments, chapters)
-                    chapter_counts[vid] = len(rows)
-                    chapter_videos += 1
-                    print(f"  {vid} | \"{title_preview}\" | {len(chapters)} chapters → {len(rows)} rows")
-                else:
-                    row = build_full_transcript_row(video, segments)
-                    rows = [row] if row else []
-                    chapter_counts[vid] = 0
-                    fixed_videos += 1
-                    print(f"  {vid} | \"{title_preview}\" | full transcript → 1 row")
-
-                all_chapter_rows.extend(rows)
-
-            print(f"\n  Total: {len(all_chapter_rows)} chapter rows from {len(videos)} videos "
-                  f"({chapter_videos} with chapters, {fixed_videos} full transcript)")
+        videos = all_videos
+        print(f"\nTotal: {len(all_chapter_rows)} chapter rows from {len(videos)} videos "
+              f"({total_chapter_videos} with chapters, {total_fixed_videos} full transcript)")
 
         # Create tables
         print("\nCreating MotherDuck tables...")
