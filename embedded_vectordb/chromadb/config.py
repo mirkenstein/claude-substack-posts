@@ -15,6 +15,8 @@ DB_PATH = os.environ.get(
 # Collection names
 POSTS_COLLECTION = "substack_posts"
 COMMENTS_COLLECTION = "substack_comments"
+VIDEO_TRANSCRIPTS_COLLECTION = "youtube_transcript_chunks"
+VIDEO_CHAPTERS_COLLECTION = "youtube_chapters"
 
 # Jina embedding config
 JINA_MODEL = "jina-embeddings-v3"
@@ -33,4 +35,5 @@ def get_jina_ef() -> JinaEmbeddingFunction:
     return JinaEmbeddingFunction(
         api_key=api_key,
         model_name=JINA_MODEL,
+        truncate=True,
     )
