@@ -53,6 +53,30 @@ JINA_API_KEY=... python embedded_vectordb/chromadb/upload_posts.py --publication
 JINA_API_KEY=... python embedded_vectordb/chromadb/search.py "Wagner mutiny"
 ```
 
+### Collections
+
+| Collection | Content | Rows |
+|---|---|---|
+| `substack_posts` | Post chunks (700-token windows) | ~8,476 |
+| `substack_comments` | Individual comments | ~55,987 |
+| `youtube_transcript_chunks` | Fixed-window transcript chunks (1000-token, 250 overlap) from both `podcasts` and `substack` databases | ~27,588 |
+| `youtube_chapters` | Chapter-aware transcript chunks from both databases. Videos without chapters get a single "Full Transcript" row | ~6,086 |
+
+### Video Upload Scripts
+
+```bash
+# Transcript chunks (fixed-window)
+JINA_API_KEY=... python embedded_vectordb/chromadb/upload_video_transcripts.py                         # incremental from both DBs
+JINA_API_KEY=... python embedded_vectordb/chromadb/upload_video_transcripts.py --database podcasts     # podcasts DB only
+JINA_API_KEY=... python embedded_vectordb/chromadb/upload_video_transcripts.py --all                   # re-upload all
+
+# Chapter-aware chunks
+JINA_API_KEY=... python embedded_vectordb/chromadb/upload_video_chapters.py                            # all from both DBs
+JINA_API_KEY=... python embedded_vectordb/chromadb/upload_video_chapters.py --database substack        # substack DB only
+```
+
+The Jina embedding function is configured with `truncate=True` to handle documents exceeding Jina's 8194-token limit server-side.
+
 ### ChromaDB Python 3.14 Fix
 
 ChromaDB's `Settings` class uses pydantic v1's `BaseSettings` which breaks on Python 3.14 (`chroma_server_nofile` type inference failure). See [chroma-core/chroma#5996](https://github.com/chroma-core/chroma/issues/5996).
