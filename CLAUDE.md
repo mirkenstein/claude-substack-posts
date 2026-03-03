@@ -267,7 +267,15 @@ Upload scripts: `weaviate/upload_posts.py`, `weaviate/upload_comments.py`, `weav
 
 **LanceDB (experimental)** — `embedded_vectordb/lancedb/`. Fully embedded (no server), uses Jina AI embeddings. Supports vector, FTS, and hybrid search. Data persists to `~/.local/share/lancedb-substack/`.
 
-**ChromaDB (experimental)** — `embedded_vectordb/chromadb/`. Persistent embedded client with Jina AI embeddings. Required a manual patch for Python 3.14 compatibility. Data persists to `~/.local/share/chromadb-substack/`.
+**ChromaDB (experimental)** — `embedded_vectordb/chromadb/`. Persistent embedded client with Jina AI embeddings (`jina-embeddings-v3`, `truncate=True`). Data persists to `~/.local/share/chromadb-substack/`.
+
+Collections:
+- `substack_posts` — post chunks (~8,476)
+- `substack_comments` — individual comments (~55,987)
+- `youtube_transcript_chunks` — fixed-window transcript chunks from both databases (~27,588)
+- `youtube_chapters` — chapter-aware transcript chunks from both databases (~6,086)
+
+Upload scripts: `embedded_vectordb/chromadb/upload_posts.py`, `upload_comments.py`, `upload_video_transcripts.py`, `upload_video_chapters.py`. Video scripts support `--database` flag and `--all` for full reload.
 
 See `embedded_vectordb/README.md` for full comparison and usage.
 
