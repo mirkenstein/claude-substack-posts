@@ -279,7 +279,7 @@ Upload scripts: `embedded_vectordb/chromadb/upload_posts.py`, `upload_comments.p
 
 See `embedded_vectordb/README.md` for full comparison and usage.
 
-**MotherDuck (experimental)** — SaaS DuckDB with built-in `embedding()` (OpenAI `text-embedding-3-small`, 512 dim) and `array_cosine_similarity()`. Auth via `MOTHERDUCK_TOKEN` env var. Table: `substack_posts` in `my_db`.
+**MotherDuck (experimental)** — SaaS DuckDB with built-in `embedding()` (OpenAI `text-embedding-3-small`, 512 dim) and `array_cosine_similarity()`. All scripts auto-load `MOTHERDUCK_TOKEN` from `motherduck/.env` via `python-dotenv` (no manual export needed). Tables in `my_db`.
 
 ```bash
 python motherduck/upload_posts.py                           # incremental (new posts only)
