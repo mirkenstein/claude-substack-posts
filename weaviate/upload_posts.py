@@ -2,8 +2,10 @@
 """Read posts from PostgreSQL, chunk if needed, and upload to Weaviate.
 
 Usage:
-    python upload_posts.py                          # upload only new posts (since last run)
+    python upload_posts.py                          # upload only new posts from both DBs
     python upload_posts.py --all                    # re-upload everything
+    python upload_posts.py --database substack      # substack DB only
+    python upload_posts.py --database podcasts      # podcasts DB only
     python upload_posts.py --publication anti-empire # upload one publication
     python upload_posts.py --since '2026-02-18'     # posts loaded after a date
 """
@@ -223,32 +225,19 @@ def build_chunks(row: dict) -> list[dict]:
 # Upload
 # ---------------------------------------------------------------------------
 
-def main():
-    parser = argparse.ArgumentParser(description="Upload posts from PostgreSQL to Weaviate")
-    parser.add_argument("--all", action="store_true",
-                        help="Re-upload all posts (ignore watermark)")
-    parser.add_argument("--publication", metavar="SUBDOMAIN",
-                        help="Only upload posts from this publication subdomain")
-    parser.add_argument("--since", metavar="TIMESTAMP",
-                        help="Upload posts loaded after this timestamp (e.g. '2026-02-18')")
-    parser.add_argument("--database", default="substack",
-                        help="PostgreSQL database to read from (default: substack)")
-    args = parser.parse_args()
+COLLECTION_MAP = {
+    "substack": POSTS_COLLECTION,
+    "podcasts": POSTS_PODCASTS_COLLECTION,
+}
 
-    # Select collection based on database
-    database = args.database
-    if database == "substack":
-        collection_name = POSTS_COLLECTION
-    elif database == "podcasts":
-        collection_name = POSTS_PODCASTS_COLLECTION
-    else:
-        collection_name = f"SubstackPost_{database}"
 
-    print(f"Database: {database} → Collection: {collection_name}")
+def upload_for_database(database: str, args, client):
+    """Upload posts from one database to its Weaviate collection."""
+    collection_name = COLLECTION_MAP.get(database, f"SubstackPost_{database}")
+    print(f"\nDatabase: {database} → Collection: {collection_name}")
 
     query, params = build_query(args, database)
 
-    # Read posts from Postgres
     from datetime import datetime, timezone
     upload_start = datetime.now(timezone.utc).isoformat()
 
@@ -276,44 +265,62 @@ def main():
     print(f"  {len(all_chunks)} total chunks ({chunked_posts} posts were split)")
 
     # Upload to Weaviate
+    collection = client.collections.get(collection_name)
+
+    print(f"Uploading to {collection_name}...")
+    start = time.time()
+    uploaded = 0
+    failed = 0
+
+    # Fixed batch size of 50 to stay under OpenAI's 300k tokens/request limit.
+    # Dynamic batching sends up to 240 objects which overflows when posts are large.
+    with collection.batch.fixed_size(batch_size=50) as batch:
+        for chunk in all_chunks:
+            obj_uuid = uuid.uuid5(
+                uuid.NAMESPACE_DNS,
+                f"engru-post-{chunk['postId']}-{chunk['chunkNumber']}"
+            )
+            batch.add_object(properties=chunk, uuid=obj_uuid)
+            uploaded += 1
+            if uploaded % 200 == 0:
+                elapsed = time.time() - start
+                print(f"  {uploaded}/{len(all_chunks)} ({uploaded/elapsed:.0f}/sec)")
+
+    if batch.number_errors > 0:
+        print(f"  {batch.number_errors} batch errors")
+        failed = batch.number_errors
+
+    elapsed = time.time() - start
+    print(f"Done: {uploaded - failed} uploaded, {failed} failed in {elapsed:.1f}s")
+
+    # Save watermark on success
+    if failed == 0:
+        save_upload_time(upload_start, database)
+        print(f"Watermark saved: {upload_start}")
+
+    # Verify
+    result = collection.aggregate.over_all(total_count=True)
+    print(f"Collection count: {result.total_count}")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Upload posts from PostgreSQL to Weaviate")
+    parser.add_argument("--all", action="store_true",
+                        help="Re-upload all posts (ignore watermark)")
+    parser.add_argument("--publication", metavar="SUBDOMAIN",
+                        help="Only upload posts from this publication subdomain")
+    parser.add_argument("--since", metavar="TIMESTAMP",
+                        help="Upload posts loaded after this timestamp (e.g. '2026-02-18')")
+    parser.add_argument("--database",
+                        help="PostgreSQL database (substack, podcasts, or both if omitted)")
+    args = parser.parse_args()
+
+    databases = [args.database] if args.database else ["substack", "podcasts"]
+
     client = get_client()
     try:
-        collection = client.collections.get(collection_name)
-
-        print(f"Uploading to {collection_name}...")
-        start = time.time()
-        uploaded = 0
-        failed = 0
-
-        # Fixed batch size of 50 to stay under OpenAI's 300k tokens/request limit.
-        # Dynamic batching sends up to 240 objects which overflows when posts are large.
-        with collection.batch.fixed_size(batch_size=50) as batch:
-            for chunk in all_chunks:
-                obj_uuid = uuid.uuid5(
-                    uuid.NAMESPACE_DNS,
-                    f"engru-post-{chunk['postId']}-{chunk['chunkNumber']}"
-                )
-                batch.add_object(properties=chunk, uuid=obj_uuid)
-                uploaded += 1
-                if uploaded % 200 == 0:
-                    elapsed = time.time() - start
-                    print(f"  {uploaded}/{len(all_chunks)} ({uploaded/elapsed:.0f}/sec)")
-
-        if batch.number_errors > 0:
-            print(f"  {batch.number_errors} batch errors")
-            failed = batch.number_errors
-
-        elapsed = time.time() - start
-        print(f"Done: {uploaded - failed} uploaded, {failed} failed in {elapsed:.1f}s")
-
-        # Save watermark on success
-        if failed == 0:
-            save_upload_time(upload_start, database)
-            print(f"Watermark saved: {upload_start}")
-
-        # Verify
-        result = collection.aggregate.over_all(total_count=True)
-        print(f"Collection count: {result.total_count}")
+        for database in databases:
+            upload_for_database(database, args, client)
     finally:
         client.close()
 

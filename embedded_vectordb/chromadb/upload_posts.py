@@ -6,11 +6,12 @@ embedding generation). ChromaDB computes embeddings client-side, unlike Weaviate
 which uses a server-side vectorizer.
 
 Usage:
-    JINA_API_KEY=... python upload_posts.py                          # incremental (since last run)
+    JINA_API_KEY=... python upload_posts.py                          # incremental from both DBs
+    JINA_API_KEY=... python upload_posts.py --database substack      # substack DB only
+    JINA_API_KEY=... python upload_posts.py --database podcasts      # podcasts DB only
     JINA_API_KEY=... python upload_posts.py --all                    # re-upload everything
     JINA_API_KEY=... python upload_posts.py --publication drlivci     # one publication
     JINA_API_KEY=... python upload_posts.py --since '2026-02-18'     # posts loaded after a date
-    JINA_API_KEY=... python upload_posts.py --database podcasts --publication martyrmade
 """
 
 import argparse
@@ -40,7 +41,9 @@ BATCH_SIZE = 50
 
 tokenizer = tiktoken.get_encoding("cl100k_base")
 
-WATERMARK_FILE = Path(__file__).parent / ".last_upload"
+def _watermark_file(database: str) -> Path:
+    suffix = f"_{database}" if database != "substack" else ""
+    return Path(__file__).parent / f".last_upload{suffix}"
 
 
 # ---------------------------------------------------------------------------
@@ -126,17 +129,18 @@ LEFT JOIN publications pub ON pub.id = p.publication_id
 """
 
 
-def get_last_upload_time() -> str | None:
-    if WATERMARK_FILE.exists():
-        return WATERMARK_FILE.read_text().strip()
+def get_last_upload_time(database: str = "substack") -> str | None:
+    wf = _watermark_file(database)
+    if wf.exists():
+        return wf.read_text().strip()
     return None
 
 
-def save_upload_time(timestamp: str):
-    WATERMARK_FILE.write_text(timestamp)
+def save_upload_time(timestamp: str, database: str = "substack"):
+    _watermark_file(database).write_text(timestamp)
 
 
-def build_query(args) -> tuple[str, list]:
+def build_query(args, database: str = "substack") -> tuple[str, list]:
     conditions = []
     params = []
 
@@ -144,7 +148,7 @@ def build_query(args) -> tuple[str, list]:
         conditions.append("p.loaded_at >= %s")
         params.append(args.since)
     elif not args.all and not args.publication:
-        last = get_last_upload_time()
+        last = get_last_upload_time(database)
         if last:
             conditions.append("p.loaded_at > %s")
             params.append(last)
@@ -160,7 +164,7 @@ def build_query(args) -> tuple[str, list]:
     return query, params
 
 
-def build_chunks(row: dict) -> list[dict]:
+def build_chunks(row: dict, source_database: str = "substack") -> list[dict]:
     plain = strip_html(row["content_html"])
     if not plain:
         return []
@@ -180,6 +184,7 @@ def build_chunks(row: dict) -> list[dict]:
         "wordcount": row["wordcount"] or word_count,
         "commentCount": row["comment_count"] or 0,
         "restacks": row["restacks"] or 0,
+        "sourceDatabase": source_database,
     }
 
     if word_count <= CHUNK_WORD_THRESHOLD:
@@ -211,36 +216,38 @@ def main():
     parser.add_argument("--all", action="store_true", help="Re-upload all posts (ignore watermark)")
     parser.add_argument("--publication", metavar="SUBDOMAIN", help="Only upload posts from this subdomain")
     parser.add_argument("--since", metavar="TIMESTAMP", help="Upload posts loaded after this timestamp")
-    parser.add_argument("--database", default="substack", help="PostgreSQL database name (default: substack)")
+    parser.add_argument("--database",
+                        help="PostgreSQL database (substack, podcasts, or both if omitted)")
     args = parser.parse_args()
-
-    query, params = build_query(args)
 
     from datetime import datetime, timezone
     upload_start = datetime.now(timezone.utc).isoformat()
 
-    print("Reading posts from PostgreSQL...")
-    with DatabaseConnection(database=args.database) as conn:
-        with conn.cursor() as cur:
-            cur.execute(query, params)
-            columns = [desc[0] for desc in cur.description]
-            rows = [dict(zip(columns, r)) for r in cur.fetchall()]
-    print(f"  {len(rows)} posts to upload")
+    databases = [args.database] if args.database else ["substack", "podcasts"]
 
-    if not rows:
-        print("Nothing new to upload.")
-        return
-
-    # Build chunks
-    print("Chunking posts...")
     all_chunks = []
     chunked_posts = 0
-    for row in rows:
-        chunks = build_chunks(row)
-        if len(chunks) > 1:
-            chunked_posts += 1
-        all_chunks.extend(chunks)
-    print(f"  {len(all_chunks)} total chunks ({chunked_posts} posts were split)")
+    for db in databases:
+        query, params = build_query(args, db)
+        print(f"Reading posts from PostgreSQL ({db})...")
+        with DatabaseConnection(database=db) as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, params)
+                columns = [desc[0] for desc in cur.description]
+                rows = [dict(zip(columns, r)) for r in cur.fetchall()]
+        print(f"  {len(rows)} posts")
+
+        for row in rows:
+            chunks = build_chunks(row, source_database=db)
+            if len(chunks) > 1:
+                chunked_posts += 1
+            all_chunks.extend(chunks)
+
+    print(f"\nTotal chunks: {len(all_chunks)} ({chunked_posts} posts were split)")
+
+    if not all_chunks:
+        print("Nothing new to upload.")
+        return
 
     # Upload to ChromaDB
     print(f"Uploading to ChromaDB collection '{POSTS_COLLECTION}'...")
@@ -254,7 +261,7 @@ def main():
     for i in range(0, len(all_chunks), BATCH_SIZE):
         batch = all_chunks[i:i + BATCH_SIZE]
 
-        ids = [f"post-{c['postId']}-chunk-{c['chunkNumber']}" for c in batch]
+        ids = [f"post-{c['sourceDatabase']}-{c['postId']}-chunk-{c['chunkNumber']}" for c in batch]
         documents = [c["content"] for c in batch]
         metadatas = [{k: v for k, v in c.items() if k != "content"} for c in batch]
 
@@ -277,8 +284,9 @@ def main():
     print(f"Done: {uploaded} uploaded in {elapsed:.1f}s ({uploaded/elapsed:.0f}/sec)")
     print(f"Collection count: {collection.count()}")
 
-    # Save watermark
-    save_upload_time(upload_start)
+    # Save watermark for each database
+    for db in databases:
+        save_upload_time(upload_start, db)
     print(f"Watermark saved: {upload_start}")
 
 

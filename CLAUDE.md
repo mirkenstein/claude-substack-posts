@@ -261,7 +261,7 @@ Collections:
 - `ExternalArticleEngRu` — external article chunks, JinaAI v3, watermark-based incremental uploads
 - `ExternalCommentEngRu` — external comment bundles (grouped by article), JinaAI v3
 
-Upload scripts: `weaviate/upload_posts.py`, `weaviate/upload_comments.py`, `weaviate/upload_videos.py`, `weaviate/upload_videos_chapters.py`, `weaviate/upload_external.py`
+Upload scripts: `weaviate/upload_posts.py`, `weaviate/upload_comments.py`, `weaviate/upload_videos.py`, `weaviate/upload_videos_chapters.py`, `weaviate/upload_external.py`. All scripts default to both `substack` and `podcasts` databases when `--database` is omitted.
 
 **Weaviate Embedded (experimental)** — `weaviate/embedded.py` runs Weaviate in-process with Jina AI embeddings (`jina-embeddings-v3`, 1024 dims). Activate with `WEAVIATE_EMBEDDED=1 JINAAI_API_KEY=... python weaviate/embedded.py`. Data persists to `~/.local/share/weaviate-embedded/`.
 
@@ -275,7 +275,7 @@ Collections:
 - `youtube_transcript_chunks` — fixed-window transcript chunks from both databases (~27,588)
 - `youtube_chapters` — chapter-aware transcript chunks from both databases (~6,086)
 
-Upload scripts: `embedded_vectordb/chromadb/upload_posts.py`, `upload_comments.py`, `upload_video_transcripts.py`, `upload_video_chapters.py`. Video scripts support `--database` flag and `--all` for full reload.
+Upload scripts: `embedded_vectordb/chromadb/upload_posts.py`, `upload_comments.py`, `upload_video_transcripts.py`, `upload_video_chapters.py`. All scripts default to both databases when `--database` is omitted.
 
 See `embedded_vectordb/README.md` for full comparison and usage.
 

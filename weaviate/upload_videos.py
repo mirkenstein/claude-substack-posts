@@ -5,12 +5,13 @@ Creates VideoChunk* collections with JinaAI v3 embeddings (1024 dim).
 Reads transcripts from youtube.video_transcripts joined with playlist info.
 
 Usage:
-    python upload_videos.py                    # upload only new videos (since last run)
-    python upload_videos.py --all              # re-upload everything
-    python upload_videos.py --upload-only      # skip collection creation
-    python upload_videos.py --create-only      # only create collection
+    python upload_videos.py                       # upload from both DBs (incremental)
+    python upload_videos.py --database substack   # substack DB only
+    python upload_videos.py --database podcasts   # podcasts DB only
+    python upload_videos.py --all                 # re-upload everything
+    python upload_videos.py --upload-only         # skip collection creation
+    python upload_videos.py --create-only         # only create collection
     python upload_videos.py --since '2026-02-18'  # videos added after a date
-    python upload_videos.py --database podcasts   # target podcasts DB → VideoChunkPodcasts
 """
 
 import argparse
@@ -256,6 +257,57 @@ def upload_chunks(client, all_chunks: list[dict], collection_name: str):
 # Main
 # ---------------------------------------------------------------------------
 
+COLLECTION_MAP = {
+    "substack": VIDEO_COLLECTION,
+    "podcasts": VIDEO_PODCASTS_COLLECTION,
+    "surgical_compass": VIDEO_SC_COLLECTION,
+}
+
+
+def upload_for_database(database: str, args, client):
+    """Upload video transcripts from one database to its Weaviate collection."""
+    collection_name = COLLECTION_MAP.get(database, f"VideoChunk_{database}")
+    print(f"\nDatabase: {database} → Collection: {collection_name}")
+
+    if not args.upload_only:
+        create_video_collection(client, collection_name)
+
+    if args.create_only:
+        return
+
+    from datetime import datetime, timezone
+    upload_start = datetime.now(timezone.utc).isoformat()
+
+    # Read from PostgreSQL
+    query, params = build_query(args, database)
+    print(f"Reading transcripts from PostgreSQL ({database})...")
+    with DatabaseConnection(database=database, schema="youtube") as conn:
+        with conn.cursor() as cur:
+            cur.execute(query, params)
+            columns = [desc[0] for desc in cur.description]
+            rows = [dict(zip(columns, r)) for r in cur.fetchall()]
+    print(f"  {len(rows)} videos to upload")
+
+    if not rows:
+        print("Nothing new to upload.")
+        return
+
+    # Chunk
+    print("Chunking transcripts...")
+    all_chunks = []
+    for row in rows:
+        chunks = build_chunks(row)
+        all_chunks.extend(chunks)
+    print(f"  {len(all_chunks)} total chunks from {len(rows)} videos")
+
+    # Upload
+    upload_chunks(client, all_chunks, collection_name)
+
+    # Save watermark on success
+    save_upload_time(upload_start, database)
+    print(f"Watermark saved: {upload_start}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Upload video transcripts to Weaviate")
     parser.add_argument("--all", action="store_true",
@@ -266,65 +318,17 @@ def main():
                         help="Only create collection, don't upload")
     parser.add_argument("--since", metavar="TIMESTAMP",
                         help="Upload videos added after this timestamp (e.g. '2026-02-18')")
-    parser.add_argument("--database", default="substack",
-                        help="PostgreSQL database to read from (default: substack)")
+    parser.add_argument("--database",
+                        help="PostgreSQL database (substack, podcasts, or both if omitted)")
     args = parser.parse_args()
 
-    # Select collection based on database
-    database = args.database
-    if database == "substack":
-        collection_name = VIDEO_COLLECTION
-    elif database == "podcasts":
-        collection_name = VIDEO_PODCASTS_COLLECTION
-    elif database == "surgical_compass":
-        collection_name = VIDEO_SC_COLLECTION
-    else:
-        collection_name = f"VideoChunk_{database}"
-
-    print(f"Database: {database} → Collection: {collection_name}")
+    databases = [args.database] if args.database else ["substack", "podcasts"]
 
     client = get_client()
     try:
         print(f"Connected to Weaviate (ready: {client.is_ready()})")
-
-        if not args.upload_only:
-            create_video_collection(client, collection_name)
-
-        if args.create_only:
-            return
-
-        from datetime import datetime, timezone
-        upload_start = datetime.now(timezone.utc).isoformat()
-
-        # Read from PostgreSQL
-        query, params = build_query(args, database)
-        print(f"\nReading transcripts from PostgreSQL ({database})...")
-        with DatabaseConnection(database=database, schema="youtube") as conn:
-            with conn.cursor() as cur:
-                cur.execute(query, params)
-                columns = [desc[0] for desc in cur.description]
-                rows = [dict(zip(columns, r)) for r in cur.fetchall()]
-        print(f"  {len(rows)} videos to upload")
-
-        if not rows:
-            print("Nothing new to upload.")
-            return
-
-        # Chunk
-        print("Chunking transcripts...")
-        all_chunks = []
-        for row in rows:
-            chunks = build_chunks(row)
-            all_chunks.extend(chunks)
-        print(f"  {len(all_chunks)} total chunks from {len(rows)} videos")
-
-        # Upload
-        upload_chunks(client, all_chunks, collection_name)
-
-        # Save watermark on success
-        save_upload_time(upload_start, database)
-        print(f"Watermark saved: {upload_start}")
-
+        for database in databases:
+            upload_for_database(database, args, client)
     finally:
         client.close()
 

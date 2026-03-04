@@ -6,11 +6,12 @@ splits transcript segments at exact chapter boundaries, and uploads to a dedicat
 Weaviate collection. Videos without chapters fall back to fixed-window chunking.
 
 Usage:
-    python upload_videos_chapters.py --database podcasts         # incremental
-    python upload_videos_chapters.py --database podcasts --all   # re-upload all
-    python upload_videos_chapters.py --database podcasts --upload-only
-    python upload_videos_chapters.py --database podcasts --create-only
-    python upload_videos_chapters.py --database podcasts --since '2026-02-28'
+    python upload_videos_chapters.py                             # incremental from both DBs
+    python upload_videos_chapters.py --database podcasts         # podcasts DB only
+    python upload_videos_chapters.py --database substack         # substack DB only
+    python upload_videos_chapters.py --all                       # re-upload all
+    python upload_videos_chapters.py --upload-only
+    python upload_videos_chapters.py --since '2026-02-28'
 """
 
 import argparse
@@ -469,6 +470,134 @@ def upload_chunks(client, all_chunks: list[dict], collection_name: str):
 # Main
 # ---------------------------------------------------------------------------
 
+COLLECTION_MAP = {
+    "podcasts": VIDEO_CHAPTER_PODCASTS_COLLECTION,
+    "substack": VIDEO_CHAPTER_SUBSTACK_COLLECTION,
+}
+
+
+def upload_for_database(database: str, args, client):
+    """Upload chapter-aware chunks from one database to its Weaviate collection."""
+    collection_name = COLLECTION_MAP.get(database)
+    if not collection_name:
+        print(f"ERROR: No chapter collection configured for database '{database}'", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"\nDatabase: {database} → Collection: {collection_name}")
+
+    if not args.upload_only:
+        create_collection(client, collection_name, recreate=args.recreate)
+
+    if args.create_only:
+        return
+
+    upload_start = datetime.now(timezone.utc).isoformat()
+
+    # Determine watermark cutoff
+    since = None
+    if args.since:
+        since = args.since
+    elif not args.all:
+        since = get_last_upload_time(database)
+
+    # Build WHERE clause
+    where_parts = []
+    params = []
+    if since:
+        where_parts.append("ts.created_at > %s")
+        params.append(since)
+
+    where = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
+    query = VIDEOS_WITH_SEGMENTS_QUERY.format(where=where)
+
+    # Fetch video list
+    print(f"Reading videos from PostgreSQL ({database})...")
+    if since:
+        print(f"  Incremental: segments created after {since}")
+    else:
+        print(f"  Full upload: all videos with segments")
+
+    with DatabaseConnection(database=database, schema="youtube") as conn:
+        with conn.cursor() as cur:
+            cur.execute(query, params)
+            columns = [desc[0] for desc in cur.description]
+            videos = [dict(zip(columns, r)) for r in cur.fetchall()]
+
+        print(f"  {len(videos)} videos to process")
+
+        if not videos:
+            print("Nothing new to upload.")
+            return
+
+        # Step 1: Populate video_chapters for videos that need it
+        print("\nPopulating video chapters from descriptions...")
+        with conn.cursor() as cur:
+            cur.execute(VIDEOS_WITHOUT_CHAPTERS_QUERY)
+            videos_needing_chapters = {r[0] for r in cur.fetchall()}
+
+        chapters_populated = 0
+        for video in videos:
+            vid = video["video_id"]
+            if vid in videos_needing_chapters:
+                chapters = parse_chapters_from_description(video.get("description") or "")
+                if chapters:
+                    populate_video_chapters(conn, vid, chapters)
+                    chapters_populated += 1
+
+        print(f"  Populated chapters for {chapters_populated} videos")
+
+        # Step 2: Build chunks for each video
+        print("\nBuilding chapter-aware chunks...")
+        all_chunks = []
+        chapter_videos = 0
+        fixed_videos = 0
+
+        for video in videos:
+            vid = video["video_id"]
+
+            # Fetch segments
+            with conn.cursor() as cur:
+                cur.execute(SEGMENTS_QUERY, (vid,))
+                seg_cols = [desc[0] for desc in cur.description]
+                segments = [dict(zip(seg_cols, r)) for r in cur.fetchall()]
+
+            if not segments:
+                continue
+
+            # Fetch chapters
+            with conn.cursor() as cur:
+                cur.execute(CHAPTERS_QUERY, (vid,))
+                ch_cols = [desc[0] for desc in cur.description]
+                chapters = [dict(zip(ch_cols, r)) for r in cur.fetchall()]
+
+            title_preview = (video["title"] or "")[:50]
+            if chapters:
+                chunks = build_chapter_chunks(video, segments, chapters)
+                chapter_videos += 1
+                method = f"{len(chapters)} chapters"
+            else:
+                chunks = build_fixed_chunks(video, segments)
+                fixed_videos += 1
+                method = "fixed_window"
+
+            print(f"  {vid} | \"{title_preview}\" | {method} → {len(chunks)} chunks")
+            all_chunks.extend(chunks)
+
+        print(f"\n  Total: {len(all_chunks)} chunks from {len(videos)} videos "
+              f"({chapter_videos} chapter-aware, {fixed_videos} fixed-window)")
+
+    if not all_chunks:
+        print("No chunks to upload.")
+        return
+
+    # Step 3: Upload
+    upload_chunks(client, all_chunks, collection_name)
+
+    # Save watermark
+    save_upload_time(upload_start, database)
+    print(f"Watermark saved: {upload_start}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Upload chapter-aware video transcript chunks to Weaviate")
@@ -482,138 +611,17 @@ def main():
                         help="Upload videos with segments added after this timestamp")
     parser.add_argument("--recreate", action="store_true",
                         help="Delete and recreate collection without prompting")
-    parser.add_argument("--database", default="podcasts",
-                        help="PostgreSQL database (default: podcasts)")
+    parser.add_argument("--database",
+                        help="PostgreSQL database (podcasts, substack, or both if omitted)")
     args = parser.parse_args()
 
-    database = args.database
-    COLLECTION_MAP = {
-        "podcasts": VIDEO_CHAPTER_PODCASTS_COLLECTION,
-        "substack": VIDEO_CHAPTER_SUBSTACK_COLLECTION,
-    }
-    collection_name = COLLECTION_MAP.get(database)
-    if not collection_name:
-        print(f"ERROR: No chapter collection configured for database '{database}'", file=sys.stderr)
-        sys.exit(1)
-
-    print(f"Database: {database} → Collection: {collection_name}")
+    databases = [args.database] if args.database else ["podcasts", "substack"]
 
     client = get_client()
     try:
         print(f"Connected to Weaviate (ready: {client.is_ready()})")
-
-        if not args.upload_only:
-            create_collection(client, collection_name, recreate=args.recreate)
-
-        if args.create_only:
-            return
-
-        upload_start = datetime.now(timezone.utc).isoformat()
-
-        # Determine watermark cutoff
-        since = None
-        if args.since:
-            since = args.since
-        elif not args.all:
-            since = get_last_upload_time(database)
-
-        # Build WHERE clause
-        where_parts = []
-        params = []
-        if since:
-            where_parts.append("ts.created_at > %s")
-            params.append(since)
-
-        where = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
-        query = VIDEOS_WITH_SEGMENTS_QUERY.format(where=where)
-
-        # Fetch video list
-        print(f"\nReading videos from PostgreSQL ({database})...")
-        if since:
-            print(f"  Incremental: segments created after {since}")
-        else:
-            print(f"  Full upload: all videos with segments")
-
-        with DatabaseConnection(database=database, schema="youtube") as conn:
-            with conn.cursor() as cur:
-                cur.execute(query, params)
-                columns = [desc[0] for desc in cur.description]
-                videos = [dict(zip(columns, r)) for r in cur.fetchall()]
-
-            print(f"  {len(videos)} videos to process")
-
-            if not videos:
-                print("Nothing new to upload.")
-                return
-
-            # Step 1: Populate video_chapters for videos that need it
-            print("\nPopulating video chapters from descriptions...")
-            with conn.cursor() as cur:
-                cur.execute(VIDEOS_WITHOUT_CHAPTERS_QUERY)
-                videos_needing_chapters = {r[0] for r in cur.fetchall()}
-
-            chapters_populated = 0
-            for video in videos:
-                vid = video["video_id"]
-                if vid in videos_needing_chapters:
-                    chapters = parse_chapters_from_description(video.get("description") or "")
-                    if chapters:
-                        populate_video_chapters(conn, vid, chapters)
-                        chapters_populated += 1
-
-            print(f"  Populated chapters for {chapters_populated} videos")
-
-            # Step 2: Build chunks for each video
-            print("\nBuilding chapter-aware chunks...")
-            all_chunks = []
-            chapter_videos = 0
-            fixed_videos = 0
-
-            for video in videos:
-                vid = video["video_id"]
-
-                # Fetch segments
-                with conn.cursor() as cur:
-                    cur.execute(SEGMENTS_QUERY, (vid,))
-                    seg_cols = [desc[0] for desc in cur.description]
-                    segments = [dict(zip(seg_cols, r)) for r in cur.fetchall()]
-
-                if not segments:
-                    continue
-
-                # Fetch chapters
-                with conn.cursor() as cur:
-                    cur.execute(CHAPTERS_QUERY, (vid,))
-                    ch_cols = [desc[0] for desc in cur.description]
-                    chapters = [dict(zip(ch_cols, r)) for r in cur.fetchall()]
-
-                title_preview = (video["title"] or "")[:50]
-                if chapters:
-                    chunks = build_chapter_chunks(video, segments, chapters)
-                    chapter_videos += 1
-                    method = f"{len(chapters)} chapters"
-                else:
-                    chunks = build_fixed_chunks(video, segments)
-                    fixed_videos += 1
-                    method = "fixed_window"
-
-                print(f"  {vid} | \"{title_preview}\" | {method} → {len(chunks)} chunks")
-                all_chunks.extend(chunks)
-
-            print(f"\n  Total: {len(all_chunks)} chunks from {len(videos)} videos "
-                  f"({chapter_videos} chapter-aware, {fixed_videos} fixed-window)")
-
-        if not all_chunks:
-            print("No chunks to upload.")
-            return
-
-        # Step 3: Upload
-        upload_chunks(client, all_chunks, collection_name)
-
-        # Save watermark
-        save_upload_time(upload_start, database)
-        print(f"Watermark saved: {upload_start}")
-
+        for database in databases:
+            upload_for_database(database, args, client)
     finally:
         client.close()
 

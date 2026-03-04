@@ -6,11 +6,12 @@ embedding generation). ChromaDB computes embeddings client-side, unlike Weaviate
 which uses a server-side vectorizer.
 
 Usage:
-    JINA_API_KEY=... python upload_comments.py                          # incremental (since last run)
+    JINA_API_KEY=... python upload_comments.py                          # incremental from both DBs
+    JINA_API_KEY=... python upload_comments.py --database substack      # substack DB only
+    JINA_API_KEY=... python upload_comments.py --database podcasts      # podcasts DB only
     JINA_API_KEY=... python upload_comments.py --all                    # re-upload everything
     JINA_API_KEY=... python upload_comments.py --publication drlivci     # one publication
     JINA_API_KEY=... python upload_comments.py --since '2026-02-18'     # comments after a date
-    JINA_API_KEY=... python upload_comments.py --database podcasts --publication martyrmade
 """
 
 import argparse
@@ -31,7 +32,9 @@ MAX_TOKENS = 8000
 BATCH_SIZE = 50
 tokenizer = tiktoken.get_encoding("cl100k_base")
 
-WATERMARK_FILE = Path(__file__).parent / ".last_upload_comments"
+def _watermark_file(database: str) -> Path:
+    suffix = f"_{database}" if database != "substack" else ""
+    return Path(__file__).parent / f".last_upload_comments{suffix}"
 
 
 def truncate_to_tokens(text: str, max_tokens: int = MAX_TOKENS) -> str:
@@ -41,14 +44,15 @@ def truncate_to_tokens(text: str, max_tokens: int = MAX_TOKENS) -> str:
     return tokenizer.decode(tokens[:max_tokens])
 
 
-def get_last_upload_time() -> str | None:
-    if WATERMARK_FILE.exists():
-        return WATERMARK_FILE.read_text().strip()
+def get_last_upload_time(database: str = "substack") -> str | None:
+    wf = _watermark_file(database)
+    if wf.exists():
+        return wf.read_text().strip()
     return None
 
 
-def save_upload_time(timestamp: str):
-    WATERMARK_FILE.write_text(timestamp)
+def save_upload_time(timestamp: str, database: str = "substack"):
+    _watermark_file(database).write_text(timestamp)
 
 
 COMMENTS_QUERY_BASE = """
@@ -74,7 +78,7 @@ WHERE c.deleted = false
 """
 
 
-def build_query(args) -> tuple[str, list]:
+def build_query(args, database: str = "substack") -> tuple[str, list]:
     conditions = []
     params = []
 
@@ -82,7 +86,7 @@ def build_query(args) -> tuple[str, list]:
         conditions.append("c.date >= %s")
         params.append(args.since)
     elif not args.all and not args.publication:
-        last = get_last_upload_time()
+        last = get_last_upload_time(database)
         if last:
             conditions.append("c.date > %s")
             params.append(last)
@@ -103,23 +107,35 @@ def main():
     parser.add_argument("--all", action="store_true", help="Re-upload all comments (ignore watermark)")
     parser.add_argument("--publication", metavar="SUBDOMAIN", help="Only upload comments from this subdomain")
     parser.add_argument("--since", metavar="TIMESTAMP", help="Upload comments after this date")
-    parser.add_argument("--database", default="substack", help="PostgreSQL database name (default: substack)")
+    parser.add_argument("--database",
+                        help="PostgreSQL database (substack, podcasts, or both if omitted)")
     args = parser.parse_args()
 
-    query, params = build_query(args)
     upload_start = datetime.now(timezone.utc).isoformat()
 
-    print("Reading comments from PostgreSQL...")
-    with DatabaseConnection(database=args.database) as conn:
-        with conn.cursor() as cur:
-            cur.execute(query, params)
-            columns = [desc[0] for desc in cur.description]
-            rows = [dict(zip(columns, r)) for r in cur.fetchall()]
-    print(f"  {len(rows)} comments loaded")
+    databases = [args.database] if args.database else ["substack", "podcasts"]
 
-    if not rows:
+    all_rows = []  # (row, source_database)
+    for db in databases:
+        query, params = build_query(args, db)
+        print(f"Reading comments from PostgreSQL ({db})...")
+        with DatabaseConnection(database=db) as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, params)
+                columns = [desc[0] for desc in cur.description]
+                rows = [dict(zip(columns, r)) for r in cur.fetchall()]
+        print(f"  {len(rows)} comments")
+        for row in rows:
+            row["source_database"] = db
+        all_rows.extend(rows)
+
+    print(f"\nTotal comments: {len(all_rows)}")
+
+    if not all_rows:
         print("Nothing new to upload.")
         return
+
+    rows = all_rows
 
     client = get_client()
     jina_ef = get_jina_ef()
@@ -143,7 +159,8 @@ def main():
             if len(trimmed) < len(body):
                 truncated += 1
 
-            ids.append(f"comment-{row['comment_id']}")
+            src_db = row.get("source_database", "substack")
+            ids.append(f"comment-{src_db}-{row['comment_id']}")
             documents.append(trimmed)
             metadatas.append({
                 "commentId": str(row["comment_id"]),
@@ -157,6 +174,7 @@ def main():
                 "depth": row["depth"] or 0,
                 "isValuable": bool(row["is_valuable"]),
                 "subdomain": row["subdomain"] or "",
+                "sourceDatabase": src_db,
             })
 
         try:
@@ -183,7 +201,8 @@ def main():
 
     # Save watermark (skip if --publication to avoid advancing past other pubs)
     if not args.publication:
-        save_upload_time(upload_start)
+        for db in databases:
+            save_upload_time(upload_start, db)
         print(f"Watermark saved: {upload_start}")
 
 
