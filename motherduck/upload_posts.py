@@ -18,8 +18,12 @@ import argparse
 import re
 import sys
 import time
+
+from dotenv import load_dotenv
 from html.parser import HTMLParser
 from pathlib import Path
+
+load_dotenv(Path(__file__).parent / ".env")
 
 import duckdb
 import tiktoken
