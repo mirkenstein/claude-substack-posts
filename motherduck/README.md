@@ -4,12 +4,16 @@ Upload pipeline from PostgreSQL to [MotherDuck](https://motherduck.com/) (SaaS D
 
 ## Setup
 
-Requires `MOTHERDUCK_TOKEN` environment variable. Token stored in `.env` (not committed). All scripts connect to `md:my_db`.
+All scripts auto-load `MOTHERDUCK_TOKEN` from `motherduck/.env` via `python-dotenv`. No manual export needed.
 
 ```bash
-export MOTHERDUCK_TOKEN='...'
-pip install duckdb tiktoken
+# One-time: create .env with your token (not committed to git)
+echo "MOTHERDUCK_TOKEN='...'" > motherduck/.env
+
+pip install duckdb tiktoken python-dotenv
 ```
+
+All scripts connect to `md:my_db`. An explicit `export MOTHERDUCK_TOKEN=...` in the shell overrides the `.env` file.
 
 ## Tables
 
