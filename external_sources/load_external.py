@@ -44,6 +44,8 @@ FILENAME_DOMAIN_MAP = {
     'wsj':          'wsj.com',
     'washpost':     'washingtonpost.com',
     'the_nation':   'thenation.com',
+    'unheard':      'unherd.com',
+    'consortiumnews': 'consortiumnews.com',
 }
 
 # Files that are archive recoveries
