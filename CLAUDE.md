@@ -84,6 +84,7 @@ Speaker count heuristics in `transcribe_all.sh`:
 - **edwardslavsquat**: Checks description for multiple names, "w/", "conversation with", "interview with" patterns
 - **slavlandchronicles**: Checks title for `w/` or `W/` pattern, WOAW episodes get 3
 - **martyrmade**: Checks title for `w/` (excluding `w/audio`), comma/and patterns for multiple guests
+- **dutchrojas**: "Doctor's Lounge" → 4 speakers (panel), named guests (Becker, Morin, Bruce) or "Inside the Arena"/"David & Goliath" → 2 speakers, default 1 (solo Rojas Report)
 - Default: 1 speaker (solo podcast)
 
 ### External Sources
@@ -262,6 +263,21 @@ Collections:
 - `ExternalCommentEngRu` — external comment bundles (grouped by article), JinaAI v3
 
 Upload scripts: `weaviate/upload_posts.py`, `weaviate/upload_comments.py`, `weaviate/upload_videos.py`, `weaviate/upload_videos_chapters.py`, `weaviate/upload_external.py`. All scripts default to both `substack` and `podcasts` databases when `--database` is omitted.
+
+**Vector caching** (`weaviate/vector_cache.py`) — export embedding vectors from Weaviate to local JSONL files, keyed by MD5 hash of the vectorized content. When re-uploading a collection from scratch (e.g. after DB ID changes), cached vectors are matched by content hash and passed directly to Weaviate, skipping the embedding API call for unchanged content.
+
+```bash
+# Export vectors before destroying a collection
+python weaviate/vector_cache.py -c ExternalArticleEngRu ExternalCommentEngRu
+
+# List cached collections
+python weaviate/vector_cache.py --list
+
+# Re-upload with cache (skips embedding API for content with cached vectors)
+python weaviate/upload_external.py --all --use-cache
+```
+
+Cache files are stored in `weaviate/vector_cache/{collection_name}.jsonl`. The `VECTORIZED_PROPERTY` map in `vector_cache.py` defines which text property is embedded for each collection. Currently supported by `upload_external.py` (`--use-cache` flag); can be extended to other upload scripts.
 
 **Weaviate Embedded (experimental)** — `weaviate/embedded.py` runs Weaviate in-process with Jina AI embeddings (`jina-embeddings-v3`, 1024 dims). Activate with `WEAVIATE_EMBEDDED=1 JINAAI_API_KEY=... python weaviate/embedded.py`. Data persists to `~/.local/share/weaviate-embedded/`.
 

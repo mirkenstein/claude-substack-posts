@@ -42,6 +42,7 @@ from config import (
     CHUNK_SIZE, OVERLAP, MIN_CHUNK_SIZE,
 )
 
+from vector_cache import content_hash, load_cache
 from weaviate.classes.config import Configure, Property, DataType
 
 tokenizer = tiktoken.get_encoding("cl100k_base")
@@ -416,7 +417,8 @@ def bundle_comments(comments: list[dict], article_meta: dict) -> list[dict]:
 # Upload
 # ---------------------------------------------------------------------------
 
-def upload_article_chunks(client, articles: list[dict], collection_name: str = EXTERNAL_ARTICLES_COLLECTION):
+def upload_article_chunks(client, articles: list[dict], collection_name: str = EXTERNAL_ARTICLES_COLLECTION,
+                          vector_cache: dict | None = None):
     """Chunk and upload articles to Weaviate, with per-source progress."""
     collection = client.collections.get(collection_name)
 
@@ -427,6 +429,7 @@ def upload_article_chunks(client, articles: list[dict], collection_name: str = E
 
     total_chunks = 0
     total_errors = 0
+    cache_hits = 0
     start = time.time()
 
     for domain, source_articles in by_source.items():
@@ -447,9 +450,17 @@ def upload_article_chunks(client, articles: list[dict], collection_name: str = E
                         f"engru-ext-article-{chunk['articleId']}-{chunk['chunkNumber']}"
                     )
                     content = chunk.pop("content")
+                    # Look up cached vector by content hash
+                    vector = None
+                    if vector_cache:
+                        h = content_hash(content)
+                        vector = vector_cache.get(h)
+                        if vector:
+                            cache_hits += 1
                     batch.add_object(
                         properties={"content": content, **chunk},
                         uuid=obj_uuid,
+                        vector=vector,
                     )
 
             if batch.number_errors > 0:
@@ -465,12 +476,15 @@ def upload_article_chunks(client, articles: list[dict], collection_name: str = E
 
     elapsed = time.time() - start
     print(f"\nArticles total: {total_chunks} chunks, {total_errors} errors in {elapsed:.1f}s")
+    if vector_cache:
+        print(f"  Cache hits: {cache_hits}/{total_chunks} ({100*cache_hits/total_chunks:.0f}% skipped embedding)")
 
     count = collection.aggregate.over_all(total_count=True).total_count
     print(f"Collection {collection_name} count: {count}")
 
 
-def upload_comment_bundles(client, comments: list[dict], collection_name: str = EXTERNAL_COMMENTS_COLLECTION):
+def upload_comment_bundles(client, comments: list[dict], collection_name: str = EXTERNAL_COMMENTS_COLLECTION,
+                           vector_cache: dict | None = None):
     """Bundle and upload comments to Weaviate, grouped by article and source."""
     collection = client.collections.get(collection_name)
 
@@ -496,6 +510,7 @@ def upload_comment_bundles(client, comments: list[dict], collection_name: str = 
 
     total_bundles = 0
     total_errors = 0
+    cache_hits = 0
     start = time.time()
 
     for domain, article_ids in domain_articles.items():
@@ -523,9 +538,17 @@ def upload_comment_bundles(client, comments: list[dict], collection_name: str = 
                         f"engru-ext-comment-{b['articleId']}-{b['bundleNumber']}"
                     )
                     bundle_text = b.pop("commentBundle")
+                    # Look up cached vector by content hash
+                    vector = None
+                    if vector_cache:
+                        h = content_hash(bundle_text)
+                        vector = vector_cache.get(h)
+                        if vector:
+                            cache_hits += 1
                     batch.add_object(
                         properties={"commentBundle": bundle_text, **b},
                         uuid=obj_uuid,
+                        vector=vector,
                     )
 
             if batch.number_errors > 0:
@@ -541,6 +564,8 @@ def upload_comment_bundles(client, comments: list[dict], collection_name: str = 
 
     elapsed = time.time() - start
     print(f"\nComments total: {total_bundles} bundles, {total_errors} errors in {elapsed:.1f}s")
+    if vector_cache:
+        print(f"  Cache hits: {cache_hits}/{total_bundles} ({100*cache_hits/total_bundles:.0f}% skipped embedding)")
 
     count = collection.aggregate.over_all(total_count=True).total_count
     print(f"Collection {collection_name} count: {count}")
@@ -566,6 +591,8 @@ def main():
                         help="Upload records updated after this timestamp (ISO format)")
     parser.add_argument("--database", default="substack",
                         help="PostgreSQL database name (default: substack)")
+    parser.add_argument("--use-cache", action="store_true",
+                        help="Use cached vectors to skip embedding API calls for unchanged content")
     args = parser.parse_args()
 
     database = args.database
@@ -622,13 +649,23 @@ def main():
                 comments = fetch_comments(conn, since=since)
                 print(f"  {len(comments)} comments")
 
+        # Load vector caches if requested
+        articles_cache = None
+        comments_cache = None
+        if args.use_cache:
+            if do_articles:
+                articles_cache = load_cache(articles_collection)
+            if do_comments:
+                comments_cache = load_cache(comments_collection)
+
         # Upload
         if do_articles:
             if articles:
                 print(f"\n{'='*60}")
                 print("UPLOADING ARTICLES")
                 print(f"{'='*60}")
-                upload_article_chunks(client, articles, articles_collection)
+                upload_article_chunks(client, articles, articles_collection,
+                                      vector_cache=articles_cache)
             else:
                 print("\nNo new articles to upload.")
 
@@ -637,7 +674,8 @@ def main():
                 print(f"\n{'='*60}")
                 print("UPLOADING COMMENTS")
                 print(f"{'='*60}")
-                upload_comment_bundles(client, comments, comments_collection)
+                upload_comment_bundles(client, comments, comments_collection,
+                                       vector_cache=comments_cache)
             else:
                 print("\nNo new comments to upload.")
 

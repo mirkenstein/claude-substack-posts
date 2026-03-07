@@ -102,6 +102,24 @@ for pid, subdomain, title, desc in cur.fetchall():
             speakers = 2
         else:
             speakers = 1
+    elif subdomain == 'dutchrojas':
+        # Doctor's Lounge = multi-physician panel (~4 speakers)
+        if "doctor's lounge" in t or 'doctor\u2019s lounge' in t:
+            speakers = 4
+        # Interview episodes with named guests
+        elif re.search(r'meet my|meet .+ friend', d):
+            speakers = 2
+        elif re.search(r'scott becker|lucien morin|patrick bruce', d, re.IGNORECASE):
+            speakers = 2
+        elif re.search(r'on becker|godfather of physician media|roundtable', t):
+            speakers = 2
+        elif re.search(r'inside the arena', t):
+            speakers = 2
+        elif 'david & goliath' in t or 'david and goliath' in t:
+            speakers = 2
+        # Solo commentary / Rojas Report
+        else:
+            speakers = 1
     else:
         speakers = 1
 
