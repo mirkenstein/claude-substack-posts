@@ -43,7 +43,9 @@ VECTORIZED_PROPERTY = {
     "VideoChunkEngRu": "transcript",
     "VideoChunkPodcasts": "transcript",
     "VideoChapterChunkPodcasts": "transcript",
-    "VideoChapterChunkSubstack": "transcript",
+    "VideoChapterChunkEngRu": "transcript",
+    "VideoChunkLibOpp": "transcript",
+    "VideoChapterChunkLibOpp": "transcript",
 }
 
 

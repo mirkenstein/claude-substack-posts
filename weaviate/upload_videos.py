@@ -26,7 +26,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.db.connection import DatabaseConnection
 
 sys.path.insert(0, str(Path(__file__).parent))
-from config import get_client, VIDEO_COLLECTION, VIDEO_PODCASTS_COLLECTION, VIDEO_SC_COLLECTION
+from config import get_client, VIDEO_COLLECTION, VIDEO_PODCASTS_COLLECTION, VIDEO_SC_COLLECTION, VIDEO_LIBOPP_COLLECTION
+from vector_cache import content_hash, load_cache
 
 from weaviate.classes.config import Configure, Property, DataType
 
@@ -214,7 +215,8 @@ def build_chunks(row: dict) -> list[dict]:
 # Upload
 # ---------------------------------------------------------------------------
 
-def upload_chunks(client, all_chunks: list[dict], collection_name: str):
+def upload_chunks(client, all_chunks: list[dict], collection_name: str,
+                  vector_cache: dict | None = None):
     """Upload chunks to Weaviate using batch import with deterministic UUIDs."""
     collection = client.collections.get(collection_name)
 
@@ -222,6 +224,7 @@ def upload_chunks(client, all_chunks: list[dict], collection_name: str):
     start = time.time()
     uploaded = 0
     errors = 0
+    cache_hits = 0
 
     with collection.batch.dynamic() as batch:
         for i, chunk in enumerate(all_chunks):
@@ -230,10 +233,17 @@ def upload_chunks(client, all_chunks: list[dict], collection_name: str):
                 f"engru-video-{chunk['videoId']}-{chunk['chunkNumber']}"
             )
             transcript = chunk.pop("transcript")
+            vector = None
+            if vector_cache:
+                h = content_hash(transcript)
+                vector = vector_cache.get(h)
+                if vector:
+                    cache_hits += 1
             try:
                 batch.add_object(
                     properties={"transcript": transcript, **chunk},
                     uuid=obj_uuid,
+                    vector=vector,
                 )
                 uploaded += 1
             except Exception as e:
@@ -247,6 +257,8 @@ def upload_chunks(client, all_chunks: list[dict], collection_name: str):
                 print(f"  [{i+1}/{len(all_chunks)}] {uploaded} uploaded ({rate:.0f}/sec)")
 
     elapsed = time.time() - start
+    if vector_cache:
+        print(f"Cache: {cache_hits}/{uploaded} hits ({100*cache_hits/max(uploaded,1):.0f}%)")
     print(f"Done: {uploaded} uploaded, {errors} errors in {elapsed:.1f}s")
 
     count = collection.aggregate.over_all(total_count=True).total_count
@@ -261,6 +273,7 @@ COLLECTION_MAP = {
     "substack": VIDEO_COLLECTION,
     "podcasts": VIDEO_PODCASTS_COLLECTION,
     "surgical_compass": VIDEO_SC_COLLECTION,
+    "podcasts_lib": VIDEO_LIBOPP_COLLECTION,
 }
 
 
@@ -300,8 +313,13 @@ def upload_for_database(database: str, args, client):
         all_chunks.extend(chunks)
     print(f"  {len(all_chunks)} total chunks from {len(rows)} videos")
 
+    # Load vector cache if requested
+    vcache = None
+    if getattr(args, 'use_cache', False):
+        vcache = load_cache(collection_name)
+
     # Upload
-    upload_chunks(client, all_chunks, collection_name)
+    upload_chunks(client, all_chunks, collection_name, vector_cache=vcache)
 
     # Save watermark on success
     save_upload_time(upload_start, database)
@@ -318,6 +336,8 @@ def main():
                         help="Only create collection, don't upload")
     parser.add_argument("--since", metavar="TIMESTAMP",
                         help="Upload videos added after this timestamp (e.g. '2026-02-18')")
+    parser.add_argument("--use-cache", action="store_true",
+                        help="Use cached vectors to skip embedding API calls for unchanged content")
     parser.add_argument("--database",
                         help="PostgreSQL database (substack, podcasts, or both if omitted)")
     args = parser.parse_args()

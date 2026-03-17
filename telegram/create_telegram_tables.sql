@@ -2,7 +2,7 @@
 -- Source: Telegram Desktop JSON exports
 -- Usage: psql -d substack -f telegram/create_telegram_tables.sql
 
-CREATE SCHEMA IF NOT EXISTS telegrDiam;
+CREATE SCHEMA IF NOT EXISTS telegram;
 
 -- ═══════════════════════════════════════════════════════════
 -- Core tables
@@ -103,6 +103,7 @@ CREATE TABLE IF NOT EXISTS telegram.media_transcripts (
     transcript_type  TEXT NOT NULL,
     language         TEXT,
     transcript_text  TEXT,
+    speaker_map      JSONB,
     transcribed_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     model_version    TEXT
 );
@@ -113,6 +114,7 @@ CREATE TABLE IF NOT EXISTS telegram.media_transcript_segments (
     segment_index   INT NOT NULL,
     start_seconds   NUMERIC(8,2),
     end_seconds     NUMERIC(8,2),
+    speaker         TEXT,
     text            TEXT NOT NULL
 );
 
