@@ -3,11 +3,13 @@
 Load external articles from JSON files into the external schema.
 
 Usage:
-    python external_sources/load_external.py                          # load all JSON files
-    python external_sources/load_external.py --file katysha_articles.json
-    python external_sources/load_external.py --recreate               # drop & recreate schema, then load
-    python external_sources/load_external.py --recreate --no-load     # just recreate schema
-    python external_sources/load_external.py --database podcasts      # load into a different database
+    python external_sources/load_external.py                                        # load all from scraped_data/
+    python external_sources/load_external.py --file katysha_articles.json           # from scraped_data/
+    python external_sources/load_external.py --file podcasts/consortiumnews_articles.json  # subdir of scraped_data/
+    python external_sources/load_external.py --file /tmp/my_articles.json           # absolute path
+    python external_sources/load_external.py --recreate                             # drop & recreate, then load
+    python external_sources/load_external.py --recreate --no-load                   # just recreate schema
+    python external_sources/load_external.py --database podcasts                    # different database
 """
 
 import argparse
@@ -46,6 +48,10 @@ FILENAME_DOMAIN_MAP = {
     'the_nation':   'thenation.com',
     'unheard':      'unherd.com',
     'consortiumnews': 'consortiumnews.com',
+    'nickbryant':    'nickbryantnyc.com',
+    'anti_empire': 'anti-empire.com',
+    'corbettreport': 'corbettreport.com',
+
 }
 
 # Files that are archive recoveries
@@ -172,16 +178,36 @@ def guess_domain(filename):
     return None
 
 
+SOURCE_METADATA = {
+    'topwar.ru':            ('Military Review (TopWar)', 'ru'),
+    'topcor.ru':            ('TopCor', 'ru'),
+    'katyusha.org':         ('Katyusha', 'ru'),
+    'livejournal.com':      ('LiveJournal', 'ru'),
+    'liberium.ru':          ('Liberium', 'ru'),
+    'versia.ru':            ('Versia', 'ru'),
+    'paulcraigroberts.org': ('Paul Craig Roberts', 'en'),
+    'arcaluinoe.info':      ('Iurie Roșca', 'ro'),
+    'unlimitedhangout.com': ('Unlimited Hangout', 'en'),
+    'disobedientmedia.com': ('Disobedient Media', 'en'),
+    'consortiumnews.com':   ('Consortium News', 'en'),
+    'unherd.com':           ('UnHerd', 'en'),
+    'corbettreport.com':    ('The Corbett Report', 'en'),
+    'wsj.com':              ('Wall Street Journal', 'en'),
+    'washingtonpost.com':   ('Washington Post', 'en'),
+    'thenation.com':        ('The Nation', 'en'),
+}
+
+
 def ensure_source(cur, domain):
     """Ensure source exists in external.sources, auto-create if missing."""
     cur.execute("SELECT id FROM external.sources WHERE domain = %s", (domain,))
     row = cur.fetchone()
     if row:
         return row[0]
-    # Auto-create with minimal info
+    name, language = SOURCE_METADATA.get(domain, (domain, 'unknown'))
     cur.execute(
-        "INSERT INTO external.sources (domain, name, language) VALUES (%s, %s, 'unknown') RETURNING id",
-        (domain, domain)
+        "INSERT INTO external.sources (domain, name, language) VALUES (%s, %s, %s) RETURNING id",
+        (domain, name, language)
     )
     source_id = cur.fetchone()[0]
     print(f"  Created new source: {domain} (id={source_id})")
@@ -256,6 +282,7 @@ def load_json_file(conn, filepath, recovery_source=None):
         if author and author.startswith('http'):
             author = None
 
+        tags = json.dumps(a.get('tags') or a.get('categories') or [])
         image_urls = json.dumps(a.get('image_urls') or [])
         external_links = json.dumps(a.get('external_links') or [])
         internal_links = json.dumps(a.get('internal_links') or [])
@@ -270,7 +297,7 @@ def load_json_file(conn, filepath, recovery_source=None):
 
         upsert_values = (source_id, source_article_id, url, slug, file_path, title, subtitle, author,
                          publish_date, text, views, likes, cc,
-                         image_urls, external_links, internal_links,
+                         tags, image_urls, external_links, internal_links,
                          recovery_source, is_deleted)
 
         try:
@@ -278,9 +305,9 @@ def load_json_file(conn, filepath, recovery_source=None):
                 INSERT INTO external.articles
                     (source_id, source_article_id, url, slug, file_path, title, subtitle, author,
                      publish_date, text, views, likes, comment_count,
-                     image_urls, external_links, internal_links,
+                     tags, image_urls, external_links, internal_links,
                      recovery_source, is_deleted)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (source_id, url) DO UPDATE SET
                     source_article_id = COALESCE(EXCLUDED.source_article_id, external.articles.source_article_id),
                     file_path = COALESCE(EXCLUDED.file_path, external.articles.file_path),
@@ -293,6 +320,7 @@ def load_json_file(conn, filepath, recovery_source=None):
                     views = COALESCE(EXCLUDED.views, external.articles.views),
                     likes = COALESCE(EXCLUDED.likes, external.articles.likes),
                     comment_count = COALESCE(EXCLUDED.comment_count, external.articles.comment_count),
+                    tags = EXCLUDED.tags,
                     image_urls = EXCLUDED.image_urls,
                     external_links = EXCLUDED.external_links,
                     internal_links = EXCLUDED.internal_links,
@@ -351,7 +379,7 @@ def load_json_file(conn, filepath, recovery_source=None):
 
 def main():
     parser = argparse.ArgumentParser(description='Load external articles into PostgreSQL')
-    parser.add_argument('--file', help='Load a single JSON file from scraped_data/')
+    parser.add_argument('--file', help='Load a single JSON file (path relative to CWD or scraped_data/)')
     parser.add_argument('--database', default='substack', help='PostgreSQL database name (default: substack)')
     parser.add_argument('--recreate', action='store_true', help='Drop and recreate external schema before loading')
     parser.add_argument('--no-load', action='store_true', help='With --recreate, only recreate schema without loading data')
@@ -367,9 +395,12 @@ def main():
 
     # Determine which files to load
     if args.file:
-        file_path = SCRAPED_DIR / args.file
+        # Try as-is first (absolute or relative to CWD), then fall back to scraped_data/
+        file_path = Path(args.file)
         if not file_path.exists():
-            print(f"ERROR: File not found: {file_path}", file=sys.stderr)
+            file_path = SCRAPED_DIR / args.file
+        if not file_path.exists():
+            print(f"ERROR: File not found: {args.file}", file=sys.stderr)
             sys.exit(1)
         json_files = [file_path]
     else:

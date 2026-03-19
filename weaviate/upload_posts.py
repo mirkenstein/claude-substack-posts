@@ -186,9 +186,9 @@ def build_chunks(row: dict) -> list[dict]:
         "restacks": row["restacks"] or 0,
     }
 
-    # Single chunk for short posts
-    if word_count <= CHUNK_WORD_THRESHOLD:
-        tokens = count_tokens(plain)
+    # Single chunk for short posts (must also fit within embedding model token limit)
+    tokens = count_tokens(plain)
+    if word_count <= CHUNK_WORD_THRESHOLD and tokens <= 8000:
         return [{
             **shared,
             "content": plain,
@@ -202,11 +202,13 @@ def build_chunks(row: dict) -> list[dict]:
     chunks = []
     for idx, chunk_text in enumerate(text_chunks):
         tok_count = count_tokens(chunk_text)
-        # Merge tiny last chunk into previous
+        # Merge tiny last chunk into previous (unless it would exceed embedding limit)
         if tok_count < MIN_CHUNK_SIZE and idx > 0 and chunks:
-            chunks[-1]["content"] += "\n\n" + chunk_text
-            chunks[-1]["chunkTokens"] = count_tokens(chunks[-1]["content"])
-            continue
+            merged_tokens = count_tokens(chunks[-1]["content"] + "\n\n" + chunk_text)
+            if merged_tokens <= 8000:
+                chunks[-1]["content"] += "\n\n" + chunk_text
+                chunks[-1]["chunkTokens"] = merged_tokens
+                continue
         chunks.append({
             **shared,
             "content": chunk_text,

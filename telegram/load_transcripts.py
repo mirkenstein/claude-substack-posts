@@ -2,8 +2,9 @@
 """
 Load Telegram audio/video transcript JSON files into the telegram schema.
 
-Matches each transcript to an existing message_media row by base filename.
-The transcript filename convention is: {original_media_name}_transcript.json
+Matches each transcript to an existing message_media row. Two naming conventions:
+  - {message_id}_{description}_transcript.json  (matched by message ID)
+  - {original_media_name}_transcript.json        (matched by file_name in DB)
 
 Usage:
     # Single file
@@ -27,6 +28,7 @@ Usage:
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -36,6 +38,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from db.config import get_db_config
 
 TRANSCRIPT_SUFFIX = '_transcript.json'
+
+# Pattern: leading digits followed by underscore or end (e.g. "1312_description" or "3656")
+MSG_ID_PREFIX_RE = re.compile(r'^(\d+)(?:_|$)')
 
 
 def extract_media_basename(filepath: Path) -> str | None:
@@ -49,15 +54,65 @@ def extract_media_basename(filepath: Path) -> str | None:
     return None
 
 
-def find_media_row(cur, media_basename: str, channel_username: str | None = None):
-    """Find the message_media row matching a transcript's base filename.
+def extract_message_id(media_basename: str) -> int | None:
+    """Extract leading message ID from basename if present.
 
-    Matches against file_name (without extension) or file_path (basename without extension).
+    '1312_moskva_artkorrektировщик' -> 1312
+    'IMG_1677' -> None
+    """
+    m = MSG_ID_PREFIX_RE.match(media_basename)
+    return int(m.group(1)) if m else None
+
+
+def _channel_filter(channel: str | None) -> tuple[str, list]:
+    """Build a channel filter clause and params.
+
+    Matches against username, name, or numeric channel ID.
+    Returns (sql_fragment, params) where sql_fragment includes leading 'AND'.
+    """
+    if not channel:
+        return "", []
+    # Try numeric channel ID
+    try:
+        channel_id = int(channel)
+        return "AND c.id = %s", [channel_id]
+    except ValueError:
+        pass
+    return "AND (c.username = %s OR c.name = %s)", [channel, channel]
+
+
+def find_media_by_message_id(cur, message_id: int, channel: str | None = None):
+    """Find message_media row by message ID directly.
+
     Returns (media_id, channel_id, message_id) or None.
     """
-    # Try matching file_name without extension first, then file_path basename
-    if channel_username:
+    ch_filter, ch_params = _channel_filter(channel)
+    if ch_filter:
+        cur.execute(f"""
+            SELECT mm.id, mm.channel_id, mm.message_id
+            FROM telegram.message_media mm
+            JOIN telegram.channels c ON c.id = mm.channel_id
+            WHERE mm.message_id = %s {ch_filter}
+            LIMIT 1
+        """, [message_id] + ch_params)
+    else:
         cur.execute("""
+            SELECT mm.id, mm.channel_id, mm.message_id
+            FROM telegram.message_media mm
+            WHERE mm.message_id = %s
+            LIMIT 1
+        """, (message_id,))
+    return cur.fetchone()
+
+
+def find_media_by_filename(cur, media_basename: str, channel: str | None = None):
+    """Find message_media row matching by file_name (without extension).
+
+    Returns (media_id, channel_id, message_id) or None.
+    """
+    ch_filter, ch_params = _channel_filter(channel)
+    if ch_filter:
+        cur.execute(f"""
             SELECT mm.id, mm.channel_id, mm.message_id
             FROM telegram.message_media mm
             JOIN telegram.channels c ON c.id = mm.channel_id
@@ -66,9 +121,9 @@ def find_media_row(cur, media_basename: str, channel_username: str | None = None
                 OR regexp_replace(mm.file_path, '^.*/', '') = %s
                    || '.' || split_part(mm.file_name, '.', -1)
             )
-            AND c.username = %s
+            {ch_filter}
             LIMIT 1
-        """, (media_basename, media_basename, channel_username))
+        """, [media_basename, media_basename] + ch_params)
     else:
         cur.execute("""
             SELECT mm.id, mm.channel_id, mm.message_id
@@ -78,12 +133,30 @@ def find_media_row(cur, media_basename: str, channel_username: str | None = None
                   || '.' || split_part(mm.file_name, '.', -1)
             LIMIT 1
         """, (media_basename, media_basename))
-
-    row = cur.fetchone()
-    return row  # (media_id, channel_id, message_id) or None
+    return cur.fetchone()
 
 
-def load_transcript(conn, filepath: Path, channel_username: str | None = None,
+def find_media_row(cur, media_basename: str, channel: str | None = None):
+    """Find the message_media row matching a transcript's base filename.
+
+    Matching strategy (in order):
+    1. If basename starts with digits_ (e.g. '1312_description'), look up by message ID
+    2. Fall back to file_name matching (without extension)
+
+    Returns (media_id, channel_id, message_id) or None.
+    """
+    # Strategy 1: message ID prefix
+    msg_id = extract_message_id(media_basename)
+    if msg_id is not None:
+        match = find_media_by_message_id(cur, msg_id, channel)
+        if match:
+            return match
+
+    # Strategy 2: filename match
+    return find_media_by_filename(cur, media_basename, channel)
+
+
+def load_transcript(conn, filepath: Path, channel: str | None = None,
                     dry_run: bool = False) -> bool:
     """Load a single transcript JSON file into the database.
 
@@ -108,7 +181,7 @@ def load_transcript(conn, filepath: Path, channel_username: str | None = None,
     cur = conn.cursor()
 
     # Find matching media row
-    match = find_media_row(cur, media_basename, channel_username)
+    match = find_media_row(cur, media_basename, channel)
     if match is None:
         print(f"  SKIP {filepath.name}: no matching media for '{media_basename}'",
               file=sys.stderr)
@@ -186,7 +259,7 @@ def main():
     parser.add_argument('files', nargs='*', help='Transcript JSON file(s)')
     parser.add_argument('--dir', '-d', help='Directory to scan for *_transcript.json files')
     parser.add_argument('--channel', '-c',
-                        help='Telegram channel username to narrow media lookup')
+                        help='Telegram channel (username, name, or numeric ID) to narrow media lookup')
     parser.add_argument('--database', default='substack',
                         help='PostgreSQL database (default: substack)')
     parser.add_argument('--dry-run', action='store_true',
@@ -214,7 +287,7 @@ def main():
             print(f"  SKIP {filepath}: file not found", file=sys.stderr)
             skipped += 1
             continue
-        if load_transcript(conn, filepath, channel_username=args.channel,
+        if load_transcript(conn, filepath, channel=args.channel,
                            dry_run=args.dry_run):
             loaded += 1
         else:
