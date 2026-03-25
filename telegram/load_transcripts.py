@@ -120,10 +120,11 @@ def find_media_by_filename(cur, media_basename: str, channel: str | None = None)
                 regexp_replace(mm.file_name, '\\.[^.]+$', '') = %s
                 OR regexp_replace(mm.file_path, '^.*/', '') = %s
                    || '.' || split_part(mm.file_name, '.', -1)
+                OR regexp_replace(regexp_replace(mm.file_path, '^.*/', ''), '\\.[^.]+$', '') = %s
             )
             {ch_filter}
             LIMIT 1
-        """, [media_basename, media_basename] + ch_params)
+        """, [media_basename, media_basename, media_basename] + ch_params)
     else:
         cur.execute("""
             SELECT mm.id, mm.channel_id, mm.message_id
@@ -131,8 +132,9 @@ def find_media_by_filename(cur, media_basename: str, channel: str | None = None)
             WHERE regexp_replace(mm.file_name, '\\.[^.]+$', '') = %s
                OR regexp_replace(mm.file_path, '^.*/', '') = %s
                   || '.' || split_part(mm.file_name, '.', -1)
+               OR regexp_replace(regexp_replace(mm.file_path, '^.*/', ''), '\\.[^.]+$', '') = %s
             LIMIT 1
-        """, (media_basename, media_basename))
+        """, (media_basename, media_basename, media_basename))
     return cur.fetchone()
 
 
