@@ -2,9 +2,11 @@
 """
 Load Telegram audio/video transcript JSON files into the telegram schema.
 
-Matches each transcript to an existing message_media row. Two naming conventions:
+Matches each transcript to an existing message_media row. Naming conventions:
   - {message_id}_{description}_transcript.json  (matched by message ID)
   - {original_media_name}_transcript.json        (matched by file_name in DB)
+  - video_N@DD-MM-YYYY_HH-MM-SS_transcript.json (matched by posted_at + file_size)
+  - {name} (1)_transcript.json                   (Telegram duplicate suffix stripped)
 
 Usage:
     # Single file
@@ -41,6 +43,12 @@ TRANSCRIPT_SUFFIX = '_transcript.json'
 
 # Pattern: leading digits followed by underscore or end (e.g. "1312_description" or "3656")
 MSG_ID_PREFIX_RE = re.compile(r'^(\d+)(?:_|$)')
+
+# Pattern: video_N@DD-MM-YYYY_HH-MM-SS (Telegram Desktop auto-naming for round videos)
+VIDEO_AT_RE = re.compile(r'^video_(\d+)@(\d{2})-(\d{2})-(\d{4})_(\d{2})-(\d{2})-(\d{2})$')
+
+# Pattern: trailing " (N)" duplicate suffix from Telegram Desktop (e.g. "name (1)")
+DUPE_SUFFIX_RE = re.compile(r'^(.+?)\s*\(\d+\)$')
 
 
 def extract_media_basename(filepath: Path) -> str | None:
@@ -138,12 +146,70 @@ def find_media_by_filename(cur, media_basename: str, channel: str | None = None)
     return cur.fetchone()
 
 
-def find_media_row(cur, media_basename: str, channel: str | None = None):
+def find_media_by_timestamp_and_size(cur, media_basename: str,
+                                     transcript_path: Path,
+                                     channel: str | None = None):
+    """Match video_N@DD-MM-YYYY_HH-MM-SS files by posted_at timestamp and file_size.
+
+    Telegram Desktop auto-names exported round videos this way. The DB stores
+    these with file_name=NULL, so we match by exact posted_at timestamp. When
+    multiple videos share a timestamp, disambiguate by file_size from the .mp4
+    file on disk.
+
+    Returns (media_id, channel_id, message_id) or None.
+    """
+    m = VIDEO_AT_RE.match(media_basename)
+    if not m:
+        return None
+
+    _num, dd, mm, yyyy, hh, mi, ss = m.groups()
+    timestamp = f"{yyyy}-{mm}-{dd} {hh}:{mi}:{ss}"
+
+    ch_filter, ch_params = _channel_filter(channel)
+
+    cur.execute(f"""
+        SELECT mm.id, mm.channel_id, mm.message_id, mm.file_size
+        FROM telegram.message_media mm
+        JOIN telegram.messages msg
+          ON msg.channel_id = mm.channel_id AND msg.id = mm.message_id
+        {"JOIN telegram.channels c ON c.id = mm.channel_id" if ch_filter else ""}
+        WHERE mm.media_type IN ('video_file', 'video')
+          AND mm.file_name IS NULL
+          AND msg.posted_at::timestamp = %s::timestamp
+          {ch_filter}
+        ORDER BY mm.message_id
+    """, [timestamp] + ch_params)
+
+    rows = cur.fetchall()
+    if not rows:
+        return None
+    if len(rows) == 1:
+        return rows[0][:3]
+
+    # Multiple videos at same timestamp — disambiguate by file_size
+    video_dir = transcript_path.parent
+    for ext in ('.mp4', '.MP4', '.mov', '.MOV'):
+        video_file = video_dir / (media_basename + ext)
+        if video_file.exists():
+            disk_size = video_file.stat().st_size
+            for row in rows:
+                if row[3] == disk_size:
+                    return row[:3]
+            break
+
+    # If size matching fails, return first match as fallback
+    return rows[0][:3]
+
+
+def find_media_row(cur, media_basename: str, channel: str | None = None,
+                   transcript_path: Path | None = None):
     """Find the message_media row matching a transcript's base filename.
 
     Matching strategy (in order):
     1. If basename starts with digits_ (e.g. '1312_description'), look up by message ID
-    2. Fall back to file_name matching (without extension)
+    2. If basename matches video_N@DD-MM-YYYY_HH-MM-SS, match by timestamp + file_size
+    3. Fall back to file_name matching (without extension)
+    4. Strip Telegram duplicate suffix " (N)" and retry strategies 1-3
 
     Returns (media_id, channel_id, message_id) or None.
     """
@@ -154,8 +220,38 @@ def find_media_row(cur, media_basename: str, channel: str | None = None):
         if match:
             return match
 
-    # Strategy 2: filename match
-    return find_media_by_filename(cur, media_basename, channel)
+    # Strategy 2: video_N@date timestamp matching
+    if transcript_path:
+        match = find_media_by_timestamp_and_size(
+            cur, media_basename, transcript_path, channel)
+        if match:
+            return match
+
+    # Strategy 3: filename match
+    match = find_media_by_filename(cur, media_basename, channel)
+    if match:
+        return match
+
+    # Strategy 4: strip " (N)" duplicate suffix and retry
+    dupe_m = DUPE_SUFFIX_RE.match(media_basename)
+    if dupe_m:
+        stripped = dupe_m.group(1)
+        # Retry strategy 1
+        msg_id = extract_message_id(stripped)
+        if msg_id is not None:
+            match = find_media_by_message_id(cur, msg_id, channel)
+            if match:
+                return match
+        # Retry strategy 2
+        if transcript_path:
+            match = find_media_by_timestamp_and_size(
+                cur, stripped, transcript_path, channel)
+            if match:
+                return match
+        # Retry strategy 3
+        return find_media_by_filename(cur, stripped, channel)
+
+    return None
 
 
 def load_transcript(conn, filepath: Path, channel: str | None = None,
@@ -183,7 +279,8 @@ def load_transcript(conn, filepath: Path, channel: str | None = None,
     cur = conn.cursor()
 
     # Find matching media row
-    match = find_media_row(cur, media_basename, channel)
+    match = find_media_row(cur, media_basename, channel,
+                           transcript_path=filepath)
     if match is None:
         print(f"  SKIP {filepath.name}: no matching media for '{media_basename}'",
               file=sys.stderr)

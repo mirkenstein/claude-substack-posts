@@ -30,6 +30,8 @@ VIDEO_CHAPTER_SUBSTACK_COLLECTION = "VideoChapterChunkEngRu"
 VIDEO_CHAPTER_LIBOPP_COLLECTION = "VideoChapterChunkLibOpp"
 POSTS_PODCASTS_COLLECTION = "SubstackPostPodcasts"
 COMMENTS_PODCASTS_COLLECTION = "SubstackCommentPodcasts"
+TELEGRAM_MESSAGES_COLLECTION = "TelegramMessageEngRu"
+TELEGRAM_TRANSCRIPTS_COLLECTION = "TelegramTranscriptEngRu"
 
 # Chunking settings (same as ForestParkPharmacy reference)
 CHUNK_SIZE = 700       # Target chunk size in tokens

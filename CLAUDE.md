@@ -16,6 +16,7 @@ weaviate/                           # Weaviate vector search (primary)
 weaviate/embedded.py                # Experimental: embedded Weaviate with Jina AI
 embedded_vectordb/                  # Experimental: LanceDB and ChromaDB with Jina AI
 motherduck/                         # MotherDuck SaaS DuckDB (experimental)
+telegram/                           # Telegram channel ingestion and transcripts
 twitter/                            # Twitter data ingestion (separate pipeline)
 src/                                # Core library code
 src/db/                             # Database connection and loader
@@ -194,6 +195,36 @@ python weaviate/upload_videos_chapters.py --database podcasts --since '2026-02-2
 
 Anti-empire.com WordPress archive is in `~/anti-empire/` with its own `README.md` documenting the `waybackup` tool usage, two-domain split (HTML vs wp-content), and monitoring.
 
+### Telegram Channels
+
+Telegram Desktop JSON exports are loaded into the `telegram` schema. Schema in `telegram/create_telegram_tables.sql`.
+
+```bash
+# Load channel export
+python telegram/load_telegram.py telegram/ChatExport_2026-02-28/result.json --language ru
+
+# Load transcripts for media attachments
+python telegram/load_transcripts.py telegram/ChatExport_2026-02-28/ --channel strelkov_i
+```
+
+**Weaviate upload** (`weaviate/upload_telegram.py`) uploads messages and media transcripts with watermark-based incremental uploads:
+
+```bash
+python weaviate/upload_telegram.py                        # incremental (new since last run)
+python weaviate/upload_telegram.py --all                  # re-upload everything
+python weaviate/upload_telegram.py --since 2025-01-01     # messages posted after date
+python weaviate/upload_telegram.py --channel strelkov_i   # filter to one channel
+python weaviate/upload_telegram.py --messages-only         # only messages
+python weaviate/upload_telegram.py --transcripts-only      # only transcripts
+python weaviate/upload_telegram.py --create-only           # only create collections
+python weaviate/upload_telegram.py --use-cache             # reuse cached vectors
+python weaviate/upload_telegram.py --recreate              # delete and recreate without prompting
+```
+
+Messages are chunked like posts (700 tokens, 150 overlap). Short messages stay as single objects. Each message is enriched with reaction counts, forwarding info, and media type metadata. Transcripts are chunked like video transcripts (1000 tokens, 250 overlap) with speaker labels from segments when available.
+
+Watermark: `.last_upload_telegram` (skipped when `--channel` filter is active to avoid advancing past other channels).
+
 ## Database
 
 PostgreSQL database: `substack`
@@ -230,6 +261,18 @@ Key tables: `sources`, `articles`, `comments`
 - Sources: topwar.ru, livejournal.com, katyusha.org, wsj.com, thenation.com, topcor.ru, washingtonpost.com, liberium.ru, versia.ru, paulcraigroberts.org, arcaluinoe.info
 - Views: `articles_with_source` (joins source info), `substack_citations` (cross-references with `substack.post_links`)
 
+### Schema: `telegram`
+
+Telegram channel data from Desktop JSON exports. Schema in `telegram/create_telegram_tables.sql`.
+
+Key tables: `channels`, `messages`, `message_media`, `message_links`, `message_entities`, `message_reactions`, `media_transcripts`, `media_transcript_segments`
+
+- `messages` — composite PK `(channel_id, id)`, `text_plain` is the main content field, Russian FTS index
+- `message_reactions` — emoji reactions with counts per message
+- `message_media` — photo/video/audio/document attachments
+- `media_transcripts` — full transcript text with `speaker_map` JSONB and `transcript_type` (diarized/plain)
+- `media_transcript_segments` — timestamped segments `(transcript_id, segment_index, start_seconds, end_seconds, speaker, text)`
+
 ## Canonical Folder Naming
 
 Always use the full Substack subdomain for folder names: `posts/{subdomain}/`. Known legacy aliases that have been migrated:
@@ -261,8 +304,10 @@ Collections:
 - `VideoChapterChunkSubstack` — chapter-aware YouTube transcript chunks for substack database, JinaAI v3
 - `ExternalArticleEngRu` — external article chunks, JinaAI v3, watermark-based incremental uploads
 - `ExternalCommentEngRu` — external comment bundles (grouped by article), JinaAI v3
+- `TelegramMessageEngRu` — Telegram channel message chunks, JinaAI v3, watermark-based incremental uploads
+- `TelegramTranscriptEngRu` — Telegram media transcript chunks, JinaAI v3
 
-Upload scripts: `weaviate/upload_posts.py`, `weaviate/upload_comments.py`, `weaviate/upload_videos.py`, `weaviate/upload_videos_chapters.py`, `weaviate/upload_external.py`. All scripts default to both `substack` and `podcasts` databases when `--database` is omitted.
+Upload scripts: `weaviate/upload_posts.py`, `weaviate/upload_comments.py`, `weaviate/upload_videos.py`, `weaviate/upload_videos_chapters.py`, `weaviate/upload_external.py`, `weaviate/upload_telegram.py`. All scripts default to both `substack` and `podcasts` databases when `--database` is omitted.
 
 **Vector caching** (`weaviate/vector_cache.py`) — export embedding vectors from Weaviate to local JSONL files, keyed by MD5 hash of the vectorized content. When re-uploading a collection from scratch (e.g. after DB ID changes), cached vectors are matched by content hash and passed directly to Weaviate, skipping the embedding API call for unchanged content.
 
@@ -277,7 +322,7 @@ python weaviate/vector_cache.py --list
 python weaviate/upload_external.py --all --use-cache
 ```
 
-Cache files are stored in `weaviate/vector_cache/{collection_name}.jsonl`. The `VECTORIZED_PROPERTY` map in `vector_cache.py` defines which text property is embedded for each collection. Currently supported by `upload_external.py` (`--use-cache` flag); can be extended to other upload scripts.
+Cache files are stored in `weaviate/vector_cache/{collection_name}.jsonl`. The `VECTORIZED_PROPERTY` map in `vector_cache.py` defines which text property is embedded for each collection. Supported by `upload_external.py` and `upload_telegram.py` (`--use-cache` flag).
 
 **Weaviate Embedded (experimental)** — `weaviate/embedded.py` runs Weaviate in-process with Jina AI embeddings (`jina-embeddings-v3`, 1024 dims). Activate with `WEAVIATE_EMBEDDED=1 JINAAI_API_KEY=... python weaviate/embedded.py`. Data persists to `~/.local/share/weaviate-embedded/`.
 

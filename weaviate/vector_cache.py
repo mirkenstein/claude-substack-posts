@@ -46,6 +46,8 @@ VECTORIZED_PROPERTY = {
     "VideoChapterChunkEngRu": "transcript",
     "VideoChunkLibOpp": "transcript",
     "VideoChapterChunkLibOpp": "transcript",
+    "TelegramMessageEngRu": "content",
+    "TelegramTranscriptEngRu": "transcript",
 }
 
 
