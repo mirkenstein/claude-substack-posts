@@ -428,6 +428,48 @@ def build_fixed_chunks(video_meta: dict, segments: list[dict]) -> list[dict]:
 # Upload
 # ---------------------------------------------------------------------------
 
+def find_fixed_window_videos_with_chapters(client, collection_name: str,
+                                           conn) -> list[str]:
+    """Find videos stored as fixed_window in Weaviate that now have chapters in PG."""
+    from weaviate.classes.query import Filter
+    from weaviate.classes.aggregate import GroupByAggregate
+
+    if not client.collections.exists(collection_name):
+        return []
+
+    col = client.collections.get(collection_name)
+    agg = col.aggregate.over_all(
+        total_count=True,
+        filters=Filter.by_property("chunkMethod").equal("fixed_window"),
+        group_by="videoId",
+    )
+
+    fixed_window_ids = [g.grouped_by.value for g in agg.groups]
+    if not fixed_window_ids:
+        return []
+
+    # Check which of these now have chapters in PG
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT DISTINCT video_id FROM youtube.video_chapters WHERE video_id = ANY(%s)",
+            (fixed_window_ids,)
+        )
+        upgradeable = [r[0] for r in cur.fetchall()]
+
+    return upgradeable
+
+
+def delete_video_objects(client, collection_name: str, video_ids: list[str]):
+    """Delete all objects for given video IDs from Weaviate."""
+    from weaviate.classes.query import Filter
+
+    col = client.collections.get(collection_name)
+    for vid in video_ids:
+        col.data.delete_many(
+            where=Filter.by_property("videoId").equal(vid)
+        )
+
+
 def upload_chunks(client, all_chunks: list[dict], collection_name: str,
                   vector_cache: dict | None = None):
     """Upload chunks to Weaviate with deterministic UUIDs."""
@@ -537,6 +579,26 @@ def upload_for_database(database: str, args, client):
             videos = [dict(zip(columns, r)) for r in cur.fetchall()]
 
         print(f"  {len(videos)} videos to process")
+
+        # Check for videos stored as fixed_window that now have chapters in PG
+        upgrade_ids = []
+        if not args.all:
+            upgrade_ids = find_fixed_window_videos_with_chapters(
+                client, collection_name, conn)
+            already_selected = {v["video_id"] for v in videos}
+            upgrade_ids = [vid for vid in upgrade_ids if vid not in already_selected]
+            if upgrade_ids:
+                print(f"\n  Upgrading {len(upgrade_ids)} videos from fixed_window → chapter-aware")
+                upgrade_query = VIDEOS_WITH_SEGMENTS_QUERY.format(
+                    where="WHERE ts.video_id = ANY(%s)")
+                with conn.cursor() as cur:
+                    cur.execute(upgrade_query, (upgrade_ids,))
+                    ucols = [desc[0] for desc in cur.description]
+                    upgrade_videos = [dict(zip(ucols, r)) for r in cur.fetchall()]
+                videos.extend(upgrade_videos)
+                # Delete old fixed_window objects so they get replaced
+                delete_video_objects(client, collection_name, upgrade_ids)
+                print(f"  Deleted old fixed_window objects for {len(upgrade_ids)} videos")
 
         if not videos:
             print("Nothing new to upload.")

@@ -205,6 +205,10 @@ class SubstackFetcher:
         """
         Get posts from a newsletter.
 
+        Calls the archive API directly to avoid the substack_api library's
+        round-trip through Post objects, which fails for newsletters using
+        the newer canonical_url format (https://substack.com/home/post/p-{id}).
+
         Args:
             publication_url: The Substack publication URL.
             limit: Maximum number of posts to fetch. None for all posts.
@@ -214,38 +218,40 @@ class SubstackFetcher:
         Returns:
             List of post dictionaries (metadata).
         """
-        _log(f"Creating Newsletter object for: {publication_url}", verbose)
-        newsletter = self.get_newsletter(publication_url)
-        _log(f"Newsletter object created", verbose)
+        _log(f"Fetching posts from archive API: {publication_url}", verbose)
 
-        # Fetch posts - use a large number if limit is None (fetch all)
-        fetch_limit = limit if limit is not None else 10000
-        _log(f"Fetching posts with limit={fetch_limit}, sorting={sorting}", verbose)
-        posts = newsletter.get_posts(limit=fetch_limit, sorting=sorting)
-        _log(f"Received {len(posts) if posts else 0} posts from API", verbose)
-
-        # Convert Post objects to dictionaries using their metadata
         result = []
-        for i, post in enumerate(posts):
-            try:
-                if hasattr(post, 'get_metadata'):
-                    _log(f"Converting post {i+1}/{len(posts)} to metadata", verbose)
-                    result.append(post.get_metadata())
-                elif isinstance(post, dict):
-                    result.append(post)
-                else:
-                    # Fallback: try to access common attributes
-                    result.append({
-                        'slug': getattr(post, 'slug', None),
-                        'title': getattr(post, 'title', None),
-                        'id': getattr(post, 'id', None),
-                    })
-            except Exception as e:
-                # Skip posts that fail to fetch (e.g., 404 deleted posts)
-                _log(f"Skipping post {i+1}/{len(posts)}: {e}", verbose)
-                print(f"Warning: Skipping post {i+1}: {e}", file=sys.stderr)
-                continue
-        _log(f"Converted {len(result)} posts to dictionaries", verbose)
+        offset = 0
+        batch_size = 15
+
+        while True:
+            endpoint = f"{publication_url.rstrip('/')}/api/v1/archive?sort={sorting}&offset={offset}&limit={batch_size}"
+            _log(f"Fetching archive batch: offset={offset}", verbose)
+
+            response = self.session.get(
+                endpoint,
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
+                timeout=30,
+            )
+            response.raise_for_status()
+
+            items = response.json()
+            if not items:
+                break
+
+            result.extend(items)
+
+            if limit and len(result) >= limit:
+                result = result[:limit]
+                break
+
+            if len(items) < batch_size:
+                break
+
+            offset += batch_size
+            time.sleep(2)
+
+        _log(f"Fetched {len(result)} posts from archive API", verbose)
         return result
 
     def get_post(self, post_url: str) -> Post:
