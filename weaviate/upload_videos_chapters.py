@@ -204,20 +204,23 @@ def save_upload_time(timestamp: str, database: str):
 # ---------------------------------------------------------------------------
 
 VIDEOS_WITH_SEGMENTS_QUERY = """
-SELECT DISTINCT
-    ts.video_id,
-    vt.title,
-    vt.description,
-    vt.channel_name,
-    vt.url,
-    vt.upload_date,
-    p.title AS playlist_name
-FROM youtube.transcript_segments ts
-JOIN youtube.video_transcripts vt ON vt.video_id = ts.video_id
-LEFT JOIN youtube.playlist_videos pv ON pv.video_id = ts.video_id
-LEFT JOIN youtube.playlists p ON p.playlist_id = pv.playlist_id
-{where}
-ORDER BY vt.upload_date
+SELECT * FROM (
+    SELECT DISTINCT ON (ts.video_id)
+        ts.video_id,
+        vt.title,
+        vt.description,
+        vt.channel_name,
+        vt.url,
+        vt.upload_date,
+        p.title AS playlist_name
+    FROM youtube.transcript_segments ts
+    JOIN youtube.video_transcripts vt ON vt.video_id = ts.video_id
+    LEFT JOIN youtube.playlist_videos pv ON pv.video_id = ts.video_id
+    LEFT JOIN youtube.playlists p ON p.playlist_id = pv.playlist_id
+    {where}
+    ORDER BY ts.video_id, p.title
+) sub
+ORDER BY upload_date
 """
 
 SEGMENTS_QUERY = """

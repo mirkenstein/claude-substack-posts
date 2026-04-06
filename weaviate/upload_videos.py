@@ -120,20 +120,25 @@ def create_video_collection(client, collection_name):
 # ---------------------------------------------------------------------------
 
 VIDEOS_QUERY_BASE = """
-SELECT
-    vt.video_id,
-    vt.title,
-    vt.description,
-    vt.channel_name,
-    vt.url,
-    vt.upload_date,
-    vt.transcript,
-    p.title AS playlist_name
-FROM youtube.video_transcripts vt
-LEFT JOIN youtube.playlist_videos pv ON pv.video_id = vt.video_id
-LEFT JOIN youtube.playlists p ON p.playlist_id = pv.playlist_id
-WHERE vt.transcript IS NOT NULL
-  AND vt.transcript != ''
+SELECT * FROM (
+    SELECT DISTINCT ON (vt.video_id)
+        vt.video_id,
+        vt.title,
+        vt.description,
+        vt.channel_name,
+        vt.url,
+        vt.upload_date,
+        vt.created_at,
+        vt.transcript,
+        p.title AS playlist_name
+    FROM youtube.video_transcripts vt
+    LEFT JOIN youtube.playlist_videos pv ON pv.video_id = vt.video_id
+    LEFT JOIN youtube.playlists p ON p.playlist_id = pv.playlist_id
+    WHERE vt.transcript IS NOT NULL
+      AND vt.transcript != ''
+    ORDER BY vt.video_id, p.title
+) sub
+WHERE true
 """
 
 
@@ -159,15 +164,15 @@ def build_query(args, database: str) -> tuple[str, list]:
     params = []
 
     if args.since:
-        query += "  AND vt.created_at >= %s\n"
+        query += "  AND created_at >= %s\n"
         params.append(args.since)
     elif not args.all:
         last = get_last_upload_time(database)
         if last:
-            query += "  AND vt.created_at > %s\n"
+            query += "  AND created_at > %s\n"
             params.append(last)
 
-    query += "ORDER BY vt.upload_date"
+    query += "ORDER BY upload_date"
     return query, params
 
 
