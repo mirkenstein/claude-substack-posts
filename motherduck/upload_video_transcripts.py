@@ -377,9 +377,10 @@ def main():
             print()
             run_embeddings(md)
 
-        # FTS (recreate over all rows)
-        print()
-        create_fts_index(md)
+        # FTS (only rebuild on full reload — DuckDB FTS doesn't auto-update)
+        if args.full:
+            print()
+            create_fts_index(md)
 
         verify(md)
 

@@ -1,0 +1,16 @@
+{
+  "publications": {
+    "exampleblog": {
+      "database": "substack",
+      "mode": "full"
+    },
+    "examplepodcast": {
+      "database": "podcasts",
+      "mode": "full"
+    },
+    "occasionalreader": {
+      "database": "substack",
+      "mode": "individual"
+    }
+  }
+}

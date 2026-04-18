@@ -98,8 +98,8 @@ python3.14 -m venv ~/chroma-mcp-local
 MCP server config (replace `uvx` command):
 ```json
 {
-  "command": "/home/mnm/chroma-mcp-local/bin/chroma-mcp",
-  "args": ["--chroma-path", "/home/mnm/.local/share/chromadb-substack"]
+  "command": "~/chroma-mcp-local/bin/chroma-mcp",
+  "args": ["--chroma-path", "~/.local/share/chromadb-substack"]
 }
 ```
 

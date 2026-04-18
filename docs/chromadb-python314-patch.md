@@ -22,7 +22,7 @@ find .venv -name config.py -path '*/chromadb/*' 2>/dev/null
 **chroma-mcp (uv cached):**
 Check the error traceback for the path, e.g.:
 ```
-/home/mnm/.cache/uv/archive-v0/<hash>/lib64/python3.14/site-packages/chromadb/config.py
+~/.cache/uv/archive-v0/<hash>/lib64/python3.14/site-packages/chromadb/config.py
 ```
 
 ## The 4 Patches

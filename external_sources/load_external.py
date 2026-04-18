@@ -51,6 +51,8 @@ FILENAME_DOMAIN_MAP = {
     'nickbryant':    'nickbryantnyc.com',
     'anti_empire': 'anti-empire.com',
     'corbettreport': 'corbettreport.com',
+    'dillonreadandco': 'dillonreadandco.com',
+    'landdestroyer': 'landdestroyer.blogspot.com',
 
 }
 
@@ -192,6 +194,8 @@ SOURCE_METADATA = {
     'consortiumnews.com':   ('Consortium News', 'en'),
     'unherd.com':           ('UnHerd', 'en'),
     'corbettreport.com':    ('The Corbett Report', 'en'),
+    'dillonreadandco.com':  ('Dillon Read & Co', 'en'),
+    'landdestroyer.blogspot.com': ('Land Destroyer Report', 'en'),
     'wsj.com':              ('Wall Street Journal', 'en'),
     'washingtonpost.com':   ('Washington Post', 'en'),
     'thenation.com':        ('The Nation', 'en'),

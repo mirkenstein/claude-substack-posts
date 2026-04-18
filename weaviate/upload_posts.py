@@ -188,7 +188,7 @@ def build_chunks(row: dict) -> list[dict]:
 
     # Single chunk for short posts (must also fit within embedding model token limit)
     tokens = count_tokens(plain)
-    if word_count <= CHUNK_WORD_THRESHOLD and tokens <= 8000:
+    if word_count <= CHUNK_WORD_THRESHOLD and tokens <= 7000:
         return [{
             **shared,
             "content": plain,
@@ -205,7 +205,7 @@ def build_chunks(row: dict) -> list[dict]:
         # Merge tiny last chunk into previous (unless it would exceed embedding limit)
         if tok_count < MIN_CHUNK_SIZE and idx > 0 and chunks:
             merged_tokens = count_tokens(chunks[-1]["content"] + "\n\n" + chunk_text)
-            if merged_tokens <= 8000:
+            if merged_tokens <= 7000:
                 chunks[-1]["content"] += "\n\n" + chunk_text
                 chunks[-1]["chunkTokens"] = merged_tokens
                 continue
@@ -317,7 +317,19 @@ def main():
                         help="PostgreSQL database (substack, podcasts, or both if omitted)")
     args = parser.parse_args()
 
-    databases = [args.database] if args.database else ["substack", "podcasts"]
+    # Resolve database: CLI > substacks.json (if --publication given) > both
+    if args.database:
+        databases = [args.database]
+    elif args.publication:
+        from src.publication_config import get_database
+        db = get_database(args.publication, default=None)
+        if db:
+            databases = [db]
+            print(f"Database: {db} (from substacks.json for {args.publication})")
+        else:
+            databases = ["substack", "podcasts"]
+    else:
+        databases = ["substack", "podcasts"]
 
     client = get_client()
     try:

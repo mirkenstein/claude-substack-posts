@@ -223,7 +223,7 @@ python weaviate/upload_telegram.py --recreate              # delete and recreate
 
 Messages are chunked like posts (700 tokens, 150 overlap). Short messages stay as single objects. Each message is enriched with reaction counts, forwarding info, and media type metadata. Transcripts are chunked like video transcripts (1000 tokens, 250 overlap) with speaker labels from segments when available.
 
-Watermark: `.last_upload_telegram` (skipped when `--channel` filter is active to avoid advancing past other channels).
+Watermark: `.last_upload_telegram`, filters on `messages.loaded_at` (skipped when `--channel` filter is active to avoid advancing past other channels).
 
 ## Database
 

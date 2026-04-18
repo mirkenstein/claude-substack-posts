@@ -22,11 +22,11 @@ Transcript filenames are matched to existing `message_media` rows by:
 ```bash
 # Dry run (verify matches before loading)
 python telegram/load_transcripts.py --dry-run --channel dnevnik_shturmovika \
-    --dir "/home/mnm/Downloads/Telegram Desktop/03172026-dnevnik-shturmovika/audio-exports/"
+    --dir "~/Downloads/Telegram Desktop/03172026-dnevnik-shturmovika/audio-exports/"
 
 # Load all transcripts from a directory
 python telegram/load_transcripts.py --channel dnevnik_shturmovika \
-    --dir "/home/mnm/Downloads/Telegram Desktop/03172026-dnevnik-shturmovika/audio-exports/"
+    --dir "~/Downloads/Telegram Desktop/03172026-dnevnik-shturmovika/audio-exports/"
 
 # Load from Papirusvtelege channel
 python telegram/load_transcripts.py --channel Papirusvtelege \

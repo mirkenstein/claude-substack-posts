@@ -6,6 +6,7 @@ Matches each transcript to an existing message_media row. Naming conventions:
   - {message_id}_{description}_transcript.json  (matched by message ID)
   - {original_media_name}_transcript.json        (matched by file_name in DB)
   - video_N@DD-MM-YYYY_HH-MM-SS_transcript.json (matched by posted_at + file_size)
+  - video_YYYY-MM-DD_HH-MM-SS_transcript.json   (matched by posted_at + file_size)
   - {name} (1)_transcript.json                   (Telegram duplicate suffix stripped)
 
 Usage:
@@ -46,6 +47,9 @@ MSG_ID_PREFIX_RE = re.compile(r'^(\d+)(?:_|$)')
 
 # Pattern: video_N@DD-MM-YYYY_HH-MM-SS (Telegram Desktop auto-naming for round videos)
 VIDEO_AT_RE = re.compile(r'^video_(\d+)@(\d{2})-(\d{2})-(\d{4})_(\d{2})-(\d{2})-(\d{2})$')
+
+# Pattern: video_YYYY-MM-DD_HH-MM-SS (Telegram Desktop auto-naming, alternate format)
+VIDEO_DASH_RE = re.compile(r'^video_(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})-(\d{2})$')
 
 # Pattern: trailing " (N)" duplicate suffix from Telegram Desktop (e.g. "name (1)")
 DUPE_SUFFIX_RE = re.compile(r'^(.+?)\s*\(\d+\)$')
@@ -149,21 +153,28 @@ def find_media_by_filename(cur, media_basename: str, channel: str | None = None)
 def find_media_by_timestamp_and_size(cur, media_basename: str,
                                      transcript_path: Path,
                                      channel: str | None = None):
-    """Match video_N@DD-MM-YYYY_HH-MM-SS files by posted_at timestamp and file_size.
+    """Match video timestamp files by posted_at timestamp and file_size.
 
-    Telegram Desktop auto-names exported round videos this way. The DB stores
-    these with file_name=NULL, so we match by exact posted_at timestamp. When
-    multiple videos share a timestamp, disambiguate by file_size from the .mp4
-    file on disk.
+    Supports two Telegram Desktop auto-naming formats:
+    - video_N@DD-MM-YYYY_HH-MM-SS (round videos)
+    - video_YYYY-MM-DD_HH-MM-SS (alternate format)
+
+    The DB stores these with file_name=NULL, so we match by exact posted_at
+    timestamp. When multiple videos share a timestamp, disambiguate by
+    file_size from the .mp4 file on disk.
 
     Returns (media_id, channel_id, message_id) or None.
     """
     m = VIDEO_AT_RE.match(media_basename)
-    if not m:
-        return None
-
-    _num, dd, mm, yyyy, hh, mi, ss = m.groups()
-    timestamp = f"{yyyy}-{mm}-{dd} {hh}:{mi}:{ss}"
+    if m:
+        _num, dd, mm, yyyy, hh, mi, ss = m.groups()
+        timestamp = f"{yyyy}-{mm}-{dd} {hh}:{mi}:{ss}"
+    else:
+        m2 = VIDEO_DASH_RE.match(media_basename)
+        if not m2:
+            return None
+        yyyy, mm, dd, hh, mi, ss = m2.groups()
+        timestamp = f"{yyyy}-{mm}-{dd} {hh}:{mi}:{ss}"
 
     ch_filter, ch_params = _channel_filter(channel)
 
@@ -207,7 +218,7 @@ def find_media_row(cur, media_basename: str, channel: str | None = None,
 
     Matching strategy (in order):
     1. If basename starts with digits_ (e.g. '1312_description'), look up by message ID
-    2. If basename matches video_N@DD-MM-YYYY_HH-MM-SS, match by timestamp + file_size
+    2. If basename matches video timestamp pattern, match by timestamp + file_size
     3. Fall back to file_name matching (without extension)
     4. Strip Telegram duplicate suffix " (N)" and retry strategies 1-3
 

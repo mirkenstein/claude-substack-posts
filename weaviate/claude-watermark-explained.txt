@@ -1,0 +1,27 @@
+ Explain how does the watermark work?
+
+● The watermark is a simple timestamp file that tracks "last successful upload time."
+
+  How it works:
+
+  1. Before uploading, the script records the current time: 2026-02-26T04:20:03
+  2. After a successful upload, it writes that timestamp to .last_upload_external in the weaviate/ directory
+  3. Next run, it reads that file and adds a WHERE updated_at > '2026-02-26T04:20:03' filter to the SQL queries — so only rows that were inserted or upserted since the last upload get fetched and sent to Weaviate
+
+  The chain:
+  load_external.py inserts/upserts article → sets updated_at = now()
+  load_external.py inserts/upserts comment → sets updated_at = now()
+                                                ↓
+  upload_external.py reads watermark file → filters WHERE updated_at > watermark
+                                                ↓
+                           only new/changed records get embedded and uploaded
+                                                ↓
+                           saves new watermark on success
+
+  The flags:
+  - No flag (default) → read watermark, upload only newer records
+  - --all → ignore watermark, upload everything
+  - --since 2026-02-25 → use this timestamp instead of the watermark file
+
+  If no watermark file exists (first run), it uploads everything — same as --all.
+

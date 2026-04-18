@@ -296,7 +296,7 @@ def fetch_messages(conn, since: str | None = None,
     filters = []
     params = []
     if since:
-        filters.append("AND GREATEST(m.posted_at, COALESCE(m.edited_at, m.posted_at)) > %s")
+        filters.append("AND m.loaded_at > %s")
         params.append(since)
     if channel:
         filters.append("AND (c.username = %s OR c.name = %s OR c.id::text = %s)")

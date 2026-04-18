@@ -305,9 +305,11 @@ def build_article_chunks(row: dict) -> list[dict]:
     for idx, chunk_text in enumerate(text_chunks):
         tok_count = count_tokens(chunk_text)
         if tok_count < MIN_CHUNK_SIZE and idx > 0 and chunks:
-            chunks[-1]["content"] += "\n\n" + chunk_text
-            chunks[-1]["chunkTokens"] = count_tokens(chunks[-1]["content"])
-            continue
+            merged_tokens = count_tokens(chunks[-1]["content"] + "\n\n" + chunk_text)
+            if merged_tokens <= 7000:
+                chunks[-1]["content"] += "\n\n" + chunk_text
+                chunks[-1]["chunkTokens"] = merged_tokens
+                continue
         chunks.append({
             **shared,
             "content": chunk_text,

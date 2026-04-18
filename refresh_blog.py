@@ -26,6 +26,7 @@ from pathlib import Path
 from src.substack_fetcher import SubstackFetcher
 from src.db.connection import DatabaseConnection
 from src.db.loader import PostLoader
+from src.publication_config import get_database
 
 
 def load_existing_list(list_path: Path) -> dict:
@@ -155,8 +156,8 @@ def main():
                         help="Delay between fetches in seconds (default: 30)")
     parser.add_argument("--jitter", type=float, default=4.0,
                         help="Random jitter added to delay (default: 4)")
-    parser.add_argument("--database", default="substack",
-                        help="PostgreSQL database (default: substack)")
+    parser.add_argument("--database",
+                        help="PostgreSQL database (overrides substacks.json; default: auto-detect)")
     parser.add_argument("--cookies", help="Path to cookies JSON for authenticated access")
     parser.add_argument("--skip-weaviate", action="store_true", help="Skip Weaviate upload")
     parser.add_argument("--dry-run", action="store_true", help="Show what would be done")
@@ -164,6 +165,9 @@ def main():
     args = parser.parse_args()
 
     subdomain = args.subdomain
+    if not args.database:
+        args.database = get_database(subdomain, default='substack')
+        print(f"Database: {args.database} (from substacks.json)")
     posts_dir = Path(f"posts/{subdomain}")
     list_path = posts_dir / f"{subdomain}_posts.json"
 

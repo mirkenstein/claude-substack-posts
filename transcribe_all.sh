@@ -161,6 +161,19 @@ done
 echo "Already transcribed: $done_count"
 [[ -n "$SUBDOMAIN_FILTER" ]] && echo "Filtered out: $skip_count (other subdomains)"
 echo "To transcribe: ${#todo[@]}"
+
+if [[ ${#todo[@]} -gt 0 ]]; then
+    echo "Speaker count distribution:"
+    for mp3 in "${todo[@]}"; do
+        if [[ -n "$FORCE_SPEAKERS" ]]; then
+            echo "$FORCE_SPEAKERS"
+        else
+            post_id=$(basename "$(dirname "$mp3")")
+            subdomain=$(basename "$(dirname "$(dirname "$mp3")")")
+            grep "^${subdomain}/${post_id}	" "$SPEAKER_MAP_FILE" | cut -f2 || echo "2"
+        fi
+    done | sort | uniq -c | awk '{printf "  %s speakers: %d episodes\n", $2, $1}'
+fi
 echo ""
 
 # ── Lookup helper ─────────────────────────────────────────────────────────────
@@ -192,7 +205,7 @@ if $DRY_RUN; then
         else
             ns=$(get_speakers "$mp3")
         fi
-        echo "  [${ns}p] $mp3"
+        echo "  [${ns} speakers] $mp3"
     done
     exit 0
 fi

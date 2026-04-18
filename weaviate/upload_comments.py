@@ -20,7 +20,12 @@ import tiktoken
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.db.connection import DatabaseConnection
-from config import get_client, COMMENTS_COLLECTION
+from config import get_client, COMMENTS_COLLECTION, COMMENTS_PODCASTS_COLLECTION
+
+COLLECTION_MAP = {
+    "substack": COMMENTS_COLLECTION,
+    "podcasts": COMMENTS_PODCASTS_COLLECTION,
+}
 
 # Truncate comments exceeding the embedding model's 8191 token limit
 MAX_TOKENS = 8000
@@ -106,7 +111,8 @@ def upload_for_database(database: str, args, client):
     extra_filters = "\n  ".join(filters)
     query = COMMENTS_QUERY.format(extra_filters=extra_filters)
 
-    print(f"\nDatabase: {database} → Collection: {COMMENTS_COLLECTION}")
+    collection_name = COLLECTION_MAP.get(database, COMMENTS_COLLECTION)
+    print(f"\nDatabase: {database} → Collection: {collection_name}")
     if args.publication:
         print(f"Publication: {args.publication}")
 
@@ -123,9 +129,9 @@ def upload_for_database(database: str, args, client):
         print("Nothing to upload.")
         return
 
-    collection = client.collections.get(COMMENTS_COLLECTION)
+    collection = client.collections.get(collection_name)
 
-    print(f"Uploading to {COMMENTS_COLLECTION}...")
+    print(f"Uploading to {collection_name}...")
     start = time.time()
     uploaded = 0
 
@@ -191,7 +197,19 @@ def main():
     parser.add_argument("--since", help="Upload comments loaded after this timestamp")
     args = parser.parse_args()
 
-    databases = [args.database] if args.database else ["substack", "podcasts"]
+    # Resolve database: CLI > substacks.json (if --publication given) > both
+    if args.database:
+        databases = [args.database]
+    elif args.publication:
+        from src.publication_config import get_database
+        db = get_database(args.publication, default=None)
+        if db:
+            databases = [db]
+            print(f"Database: {db} (from substacks.json for {args.publication})")
+        else:
+            databases = ["substack", "podcasts"]
+    else:
+        databases = ["substack", "podcasts"]
 
     client = get_client()
     try:

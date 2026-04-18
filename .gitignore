@@ -37,12 +37,47 @@ env/
 output/
 *.json
 !cookies.example.json
+!substacks.example.json
+
+# Logs (kept locally for debugging, never committed)
+logs/
+*.log
+
+# Scraped / downloaded data (large, regenerable, not for git)
+posts/
+external_sources/scraped_data/
+weaviate/docker/data/
+weaviate/vector_cache/
+
+# Telegram data dumps (keep source code, ignore exports/media/transcripts)
+telegram/ChatExport_*/
+telegram/[0-9]*/
+telegram/media/
+telegram/sample_transcript/
+telegram/load_[0-9]*.txt
+telegram/*.docx
+telegram/**/result.json
+
+# Runtime watermark state (changes every upload run)
+.last_upload*
 
 # Sensitive files - NEVER commit these
 cookies.json
 .env
 *.key
 *.pem
+*.session
+**/.session/
+twitter/accounts.db
+
+# Twitter data dumps
+twitter/data/
+twitter/*.jsonl
+twitter/scrape_progress.json
+
+# Scratch / ad-hoc command files
+transcribe/bash_command.txt
+weaviate/podcasts-videos-claide-log.txt
 
 # OS
 .DS_Store

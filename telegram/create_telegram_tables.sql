@@ -35,7 +35,8 @@ CREATE TABLE IF NOT EXISTS telegram.messages (
     actor                      TEXT,
     actor_id                   TEXT,
     action                     TEXT,
-    action_target_message_id   BIGINT
+    action_target_message_id   BIGINT,
+    loaded_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS telegram.message_media (

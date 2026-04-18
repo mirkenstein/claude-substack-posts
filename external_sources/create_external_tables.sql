@@ -18,16 +18,8 @@ CREATE TABLE external.sources (
     created_at      timestamptz DEFAULT now()
 );
 
--- Seed known sources
-INSERT INTO external.sources (domain, name, language, notes) VALUES
-    ('topwar.ru',       'Military Review (TopWar)',  'ru', 'Most popular Russian military/national security news portal. 109 articles scraped, 10 were 404d and recovered from archives.'),
-    ('livejournal.com', 'LiveJournal',               'ru', '60+ articles from various LJ accounts cited in Substack posts/comments. Includes bolivar-s TopWar mirror.'),
-    ('katyusha.org',    'Katyusha',                  'ru', 'Russian conservative/Orthodox news outlet. 95 articles scraped.'),
-    ('wsj.com',         'Wall Street Journal',       'en', '18 articles. Paywalled; scraped from archive.ph or direct access.'),
-    ('thenation.com',   'The Nation',                'en', '2 articles. Includes landmark "Harvard Boys Do Russia" piece.'),
-    ('topcor.ru',       'TopCor',                    'ru', 'Russian analytical portal. 16 articles scraped.'),
-    ('washingtonpost.com', 'Washington Post',         'en', '20 articles scraped from archive.ph or direct access.')
-ON CONFLICT (domain) DO NOTHING;
+-- Sources are auto-created by the loader (load_external.py) on first article insert.
+-- No seed data needed — ensure_source() handles INSERT ON CONFLICT DO NOTHING.
 
 -- ───────────────────────────────────────────────────────────
 -- Articles — unified across all sources
@@ -55,6 +47,7 @@ CREATE TABLE external.articles (
     comment_count   int,                         -- from header/metadata
 
     -- Structured data (JSONB for flexibility)
+    tags            jsonb DEFAULT '[]'::jsonb,   -- array of category/tag strings from source
     image_urls      jsonb DEFAULT '[]'::jsonb,   -- array of image URL strings
     external_links  jsonb DEFAULT '[]'::jsonb,   -- array of {url, text} objects
     internal_links  jsonb DEFAULT '[]'::jsonb,   -- array of {url, text} objects

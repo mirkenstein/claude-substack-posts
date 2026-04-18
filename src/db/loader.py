@@ -147,12 +147,12 @@ class PostLoader:
                     id, publication_id, primary_author_id, slug, title, subtitle,
                     canonical_url, post_date, updated_at, type, audience, is_paywalled,
                     wordcount, restacks, comment_count, cover_image, description,
-                    reactions, content_html, content_text
+                    podcast_url, reactions, content_html, content_text
                 ) VALUES (
                     %s, %s, %s, %s, %s, %s,
                     %s, %s, %s, %s, %s, %s,
                     %s, %s, %s, %s, %s,
-                    %s::jsonb, %s, %s
+                    %s, %s::jsonb, %s, %s
                 )
                 ON CONFLICT (id) DO UPDATE SET
                     title = EXCLUDED.title,
@@ -162,6 +162,7 @@ class PostLoader:
                     wordcount = EXCLUDED.wordcount,
                     restacks = EXCLUDED.restacks,
                     comment_count = EXCLUDED.comment_count,
+                    podcast_url = COALESCE(EXCLUDED.podcast_url, substack.posts.podcast_url),
                     reactions = EXCLUDED.reactions,
                     content_html = EXCLUDED.content_html,
                     content_text = EXCLUDED.content_text,
@@ -183,6 +184,7 @@ class PostLoader:
                 metadata.get('comment_count', 0),
                 metadata.get('cover_image'),
                 metadata.get('description'),
+                metadata.get('podcast_url'),
                 _json_or_none(reactions),
                 content_html,
                 strip_html(content_html),

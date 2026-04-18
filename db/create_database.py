@@ -36,25 +36,40 @@ def run_migrations():
 
     migrations_dir = Path(__file__).parent / 'migrations'
     migration_files = sorted(migrations_dir.glob('*.sql'))
+    if not migration_files:
+        print("No migrations found")
+        conn.close()
+        return
 
-    print(f"Found {len(migration_files)} migration(s)")
+    latest = migration_files[-1]
 
-    for mf in migration_files:
-        print(f"  Running {mf.name}...", end=' ')
-        sql = mf.read_text()
-        try:
-            with conn.cursor() as cur:
-                cur.execute(sql)
-            conn.commit()
-            print("OK")
-        except Exception as e:
-            conn.rollback()
-            print(f"ERROR: {e}")
-            conn.close()
-            sys.exit(1)
+    with conn.cursor() as cur:
+        cur.execute("SELECT to_regclass('substack.posts') IS NOT NULL")
+        if cur.fetchone()[0]:
+            cur.execute("SELECT count(*) FROM substack.posts")
+            n = cur.fetchone()[0]
+            if n > 0:
+                print(f"Refusing to re-init: substack.posts has {n} rows in '{config['database']}'")
+                conn.close()
+                sys.exit(1)
+        cur.execute("DROP SCHEMA IF EXISTS substack CASCADE")
+        cur.execute("DROP SCHEMA IF EXISTS external CASCADE")
+    conn.commit()
+
+    print(f"Applying {latest.name}...", end=' ')
+    try:
+        with conn.cursor() as cur:
+            cur.execute(latest.read_text())
+        conn.commit()
+        print("OK")
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        print(f"ERROR: {e}")
+        sys.exit(1)
 
     conn.close()
-    print("All migrations complete")
+    print("Schema applied")
 
 
 if __name__ == '__main__':

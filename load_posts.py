@@ -20,6 +20,7 @@ from pathlib import Path
 
 from src.db.connection import DatabaseConnection
 from src.db.loader import PostLoader
+from src.publication_config import get_database
 
 
 def setup_logging(log_file: str | None) -> logging.Logger:
@@ -99,8 +100,8 @@ def main():
                         help='Only load the N most recently modified files (ignores --resume for those files)')
     parser.add_argument('--log', help='Path to ETL log file')
     parser.add_argument('--verbose', '-v', action='store_true')
-    parser.add_argument('--database', default='substack',
-                        help='PostgreSQL database to load into (default: substack)')
+    parser.add_argument('--database',
+                        help='PostgreSQL database (overrides substacks.json; default: auto-detect)')
     args = parser.parse_args()
 
     log = setup_logging(args.log)
@@ -109,6 +110,20 @@ def main():
         files = sorted(Path(args.dir).glob('*.json'))
     else:
         files = [Path(args.file)]
+
+    # Resolve database: CLI override > substacks.json > "substack"
+    if not args.database:
+        source_path = Path(args.dir or args.file)
+        # Infer subdomain from path: posts/{subdomain}/... or posts/{subdomain}
+        parts = source_path.resolve().parts
+        if 'posts' in parts:
+            idx = parts.index('posts')
+            if idx + 1 < len(parts):
+                subdomain = parts[idx + 1]
+                args.database = get_database(subdomain, default='substack')
+                log.info("Auto-detected database '%s' for '%s' from substacks.json", args.database, subdomain)
+        if not args.database:
+            args.database = 'substack'
 
     if not files:
         log.error("No JSON files found")
